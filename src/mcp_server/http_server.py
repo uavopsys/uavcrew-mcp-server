@@ -4,13 +4,13 @@ This provides an HTTP/JSON interface to the MCP tools,
 allowing UAVCrew to call MCP servers over the network.
 
 Tools available:
-- list_entities: Discover available data
-- describe_entity: See fields for an entity
-- query_entity: Query data with filters
-- list_files, read_file, get_file_metadata: File access
+- Schema discovery: list_tables, describe_table, query_table
+  (Raw database access for UAVCrew to discover and map client schema)
+- Mapped entities: list_entities, describe_entity, query_entity
+  (Pre-mapped entity access, requires entity_mapping.yaml configuration)
+- File access: list_files, read_file, get_file_metadata
 """
 
-import json
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,7 +18,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
+from . import __version__
 from .tools.database import list_entities, describe_entity, query_entity
+from .tools.raw_database import list_tables, describe_table, query_table
 from .tools.list_files import list_files
 from .tools.read_file import read_file
 from .tools.file_metadata import get_file_metadata
@@ -34,7 +36,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="UAVCrew MCP Server",
     description="HTTP interface for MCP compliance data tools",
-    version="2.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -97,7 +99,7 @@ def verify_auth(authorization: str | None) -> bool:
 @app.get("/health")
 async def health():
     """Health check."""
-    return {"status": "healthy", "service": "mcp-server", "version": "2.0.0"}
+    return {"status": "healthy", "service": "mcp-server", "version": __version__}
 
 
 @app.post("/mcp/tools/call")
@@ -117,8 +119,30 @@ async def call_tool(
     arguments = request.arguments
 
     try:
-        # Database tools (read-only)
-        if tool_name == "list_entities":
+        # Raw database tools (schema discovery)
+        if tool_name == "list_tables":
+            result = list_tables()
+
+        elif tool_name == "describe_table":
+            table = arguments.get("table")
+            if not table:
+                return {"success": False, "error": "Missing required argument: table"}
+            result = describe_table(table)
+
+        elif tool_name == "query_table":
+            table = arguments.get("table")
+            if not table:
+                return {"success": False, "error": "Missing required argument: table"}
+            result = query_table(
+                table=table,
+                columns=arguments.get("columns"),
+                where=arguments.get("where"),
+                order_by=arguments.get("order_by"),
+                limit=arguments.get("limit", 100),
+            )
+
+        # Mapped entity tools (read-only)
+        elif tool_name == "list_entities":
             result = list_entities()
 
         elif tool_name == "describe_entity":
@@ -187,10 +211,46 @@ async def list_tools(authorization: str | None = Header(None)):
 
     return {
         "tools": [
-            # Database tools (generic, read-only)
+            # Raw database tools (schema discovery)
+            {
+                "name": "list_tables",
+                "description": "List all tables in the database. Returns table names and row counts. Call this first to discover the schema.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "describe_table",
+                "description": "Describe a table's columns with types, primary keys, foreign keys, and sample data.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "table": {"type": "string", "description": "Table name to describe"}
+                    },
+                    "required": ["table"]
+                }
+            },
+            {
+                "name": "query_table",
+                "description": "Query raw data from a table. Supports column selection, WHERE clauses, and ORDER BY.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "table": {"type": "string", "description": "Table name"},
+                        "columns": {"type": "array", "items": {"type": "string"}, "description": "Optional: Specific columns to return"},
+                        "where": {"type": "string", "description": "Optional: WHERE clause (e.g., \"status = 'active'\")"},
+                        "order_by": {"type": "string", "description": "Optional: ORDER BY clause (e.g., \"created_at DESC\")"},
+                        "limit": {"type": "integer", "description": "Maximum rows (default: 100, max: 1000)", "default": 100}
+                    },
+                    "required": ["table"]
+                }
+            },
+            # Mapped entity tools (read-only)
             {
                 "name": "list_entities",
-                "description": "List all available data entities. Call this first to see what data is available.",
+                "description": "List all available mapped data entities. Only available if entity mapping is configured.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -199,7 +259,7 @@ async def list_tools(authorization: str | None = Header(None)):
             },
             {
                 "name": "describe_entity",
-                "description": "Describe the fields available for a specific entity.",
+                "description": "Describe the fields available for a mapped entity.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -210,7 +270,7 @@ async def list_tools(authorization: str | None = Header(None)):
             },
             {
                 "name": "query_entity",
-                "description": "Query data from an entity. Get single record by ID, or multiple records with filters.",
+                "description": "Query data from a mapped entity. Get single record by ID, or multiple records with filters.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

@@ -1,3 +1,3 @@
-"""Compliance MCP Server - Reference Implementation."""
+"""UAVCrew MCP Server - Exposes client database for compliance analysis."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
