@@ -52,14 +52,35 @@ class ToolCallResponse(BaseModel):
     error: str | None = None
 
 
-# Load API key from environment
-MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
+# Load API keys from environment
+# Supports both single key (MCP_API_KEY) and multiple (MCP_API_KEYS, comma-separated)
+def _load_api_keys() -> set[str]:
+    """Load all configured API keys."""
+    keys = set()
+
+    # Single key (backwards compatible)
+    single_key = os.environ.get("MCP_API_KEY", "").strip()
+    if single_key:
+        keys.add(single_key)
+
+    # Multiple keys (comma-separated)
+    multi_keys = os.environ.get("MCP_API_KEYS", "").strip()
+    if multi_keys:
+        for key in multi_keys.split(","):
+            key = key.strip()
+            if key:
+                keys.add(key)
+
+    return keys
+
+
+MCP_API_KEYS = _load_api_keys()
 
 
 def verify_auth(authorization: str | None) -> bool:
-    """Verify authorization header."""
-    if not MCP_API_KEY:
-        return True  # No auth if key not configured
+    """Verify authorization header against configured API keys."""
+    if not MCP_API_KEYS:
+        return True  # No auth if no keys configured
 
     if not authorization:
         return False
@@ -70,7 +91,7 @@ def verify_auth(authorization: str | None) -> bool:
     else:
         token = authorization
 
-    return token == MCP_API_KEY
+    return token in MCP_API_KEYS
 
 
 @app.get("/health")

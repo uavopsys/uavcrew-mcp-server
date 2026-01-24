@@ -4,6 +4,7 @@ UAVCrew MCP Server CLI
 Interactive setup wizard and configuration tools.
 
 Usage:
+    uavcrew status             # Check installation and service status
     uavcrew setup              # Interactive configuration wizard
     uavcrew map-data           # Configure data source mappings
     uavcrew check              # Validate current configuration
@@ -578,6 +579,189 @@ def map_data():
             border_style="green",
         )
     )
+
+
+# =============================================================================
+# Status Command
+# =============================================================================
+
+SERVICE_NAME = "mcp-server"
+
+
+def _check_systemd_service() -> dict:
+    """Check systemd service status. Returns dict with status info."""
+    result = {
+        "installed": False,
+        "enabled": False,
+        "running": False,
+        "status": "not installed",
+    }
+
+    service_file = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
+    if not service_file.exists():
+        return result
+
+    result["installed"] = True
+
+    # Check if enabled
+    try:
+        proc = subprocess.run(
+            ["systemctl", "is-enabled", SERVICE_NAME],
+            capture_output=True,
+            text=True,
+        )
+        result["enabled"] = proc.returncode == 0
+    except Exception:
+        pass
+
+    # Check if running
+    try:
+        proc = subprocess.run(
+            ["systemctl", "is-active", SERVICE_NAME],
+            capture_output=True,
+            text=True,
+        )
+        result["running"] = proc.stdout.strip() == "active"
+        result["status"] = proc.stdout.strip()
+    except Exception:
+        pass
+
+    return result
+
+
+def _check_process_running(port: int = 8200) -> dict:
+    """Check if MCP server process is running (non-systemd)."""
+    result = {
+        "running": False,
+        "pid": None,
+        "method": None,
+    }
+
+    try:
+        # Check if something is listening on the port
+        proc = subprocess.run(
+            ["ss", "-tlnp", f"sport = :{port}"],
+            capture_output=True,
+            text=True,
+        )
+        if f":{port}" in proc.stdout:
+            result["running"] = True
+            # Try to extract PID
+            import re
+            match = re.search(r'pid=(\d+)', proc.stdout)
+            if match:
+                result["pid"] = match.group(1)
+            result["method"] = "manual"
+    except Exception:
+        pass
+
+    return result
+
+
+@app.command()
+def status():
+    """Check MCP server installation and service status."""
+    console.print(
+        Panel.fit(
+            "[bold blue]UAVCrew MCP Server Status[/bold blue]",
+            border_style="blue",
+        )
+    )
+
+    env_path = Path.cwd() / ".env"
+
+    # ==========================================================================
+    # Configuration Status
+    # ==========================================================================
+    console.print("\n[bold]Configuration:[/bold]")
+
+    config_ok = True
+    port = 8200
+
+    if env_path.exists():
+        console.print(f"  [green]✓[/green] .env file exists")
+        env_vars = load_env_file(env_path)
+
+        # Check key variables
+        if env_vars.get("DATABASE_URL"):
+            console.print(f"  [green]✓[/green] DATABASE_URL configured")
+        else:
+            console.print(f"  [red]✗[/red] DATABASE_URL not set")
+            config_ok = False
+
+        # Check API keys (support both single and multiple)
+        api_key = env_vars.get("MCP_API_KEY", "")
+        api_keys = env_vars.get("MCP_API_KEYS", "")
+        if api_key or api_keys:
+            key_count = len([k for k in (api_key + "," + api_keys).split(",") if k.strip()])
+            console.print(f"  [green]✓[/green] API key(s) configured ({key_count} key(s))")
+        else:
+            console.print(f"  [yellow]![/yellow] No API keys configured (server will be open)")
+
+        port = int(env_vars.get("MCP_PORT", "8200"))
+        public_url = env_vars.get("MCP_PUBLIC_URL", "")
+        if public_url:
+            console.print(f"  [dim]Public URL: {public_url}[/dim]")
+    else:
+        console.print(f"  [red]✗[/red] .env file not found")
+        console.print(f"  [dim]Run 'uavcrew setup' to configure[/dim]")
+        config_ok = False
+
+    # ==========================================================================
+    # Service Status
+    # ==========================================================================
+    console.print("\n[bold]Service Status:[/bold]")
+
+    systemd = _check_systemd_service()
+    process = _check_process_running(port)
+
+    running = False
+    restart_cmd = None
+
+    if systemd["installed"]:
+        console.print(f"  [green]✓[/green] Systemd service installed")
+
+        if systemd["enabled"]:
+            console.print(f"  [green]✓[/green] Service enabled (starts on boot)")
+        else:
+            console.print(f"  [yellow]![/yellow] Service not enabled")
+
+        if systemd["running"]:
+            console.print(f"  [green]✓[/green] Service running")
+            running = True
+            restart_cmd = f"sudo systemctl restart {SERVICE_NAME}"
+        else:
+            console.print(f"  [red]✗[/red] Service not running ({systemd['status']})")
+            restart_cmd = f"sudo systemctl start {SERVICE_NAME}"
+    else:
+        console.print(f"  [dim]–[/dim] Systemd service not installed")
+
+        # Check for manual process
+        if process["running"]:
+            console.print(f"  [green]✓[/green] Server running (manual, PID: {process['pid'] or 'unknown'})")
+            running = True
+            restart_cmd = f"# Kill PID {process['pid']} and restart manually"
+        else:
+            console.print(f"  [red]✗[/red] Server not running")
+
+    # ==========================================================================
+    # Summary & Next Steps
+    # ==========================================================================
+    console.print("\n[bold]Actions:[/bold]")
+
+    if not config_ok:
+        console.print(f"  → Run [cyan]uavcrew setup[/cyan] to configure the server")
+    elif not systemd["installed"]:
+        console.print(f"  → Run [cyan]uavcrew generate-systemd[/cyan] to create service")
+        console.print(f"  → Or start manually: [cyan]mcp-http-server[/cyan]")
+    elif not running:
+        console.print(f"  → Start: [cyan]{restart_cmd}[/cyan]")
+    else:
+        console.print(f"  [green]Server is running and configured![/green]")
+        if restart_cmd:
+            console.print(f"  → Restart: [cyan]{restart_cmd}[/cyan]")
+        console.print(f"  → Check config: [cyan]uavcrew check[/cyan]")
+        console.print(f"  → View logs: [cyan]sudo journalctl -u {SERVICE_NAME} -f[/cyan]")
 
 
 @app.command()

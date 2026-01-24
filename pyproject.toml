@@ -36,7 +36,6 @@ dev = [
 ]
 
 [project.scripts]
-mcp-server = "mcp_server.server:main"
 mcp-http-server = "mcp_server.http_server:main"
 uavcrew = "mcp_server.cli:app"
 
