@@ -260,30 +260,117 @@ See [docs/DATA_FORMATS.md](docs/DATA_FORMATS.md) for detailed schema documentati
 
 ## Security
 
+### HTTPS Setup with Nginx (Required for Production)
+
+Your MCP server runs on port 8200 by default. To expose it securely on port 443 with HTTPS:
+
+**1. Install Nginx and Certbot**
+
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install nginx certbot python3-certbot-nginx
+
+# Start nginx
+sudo systemctl enable nginx
+sudo systemctl start nginx
+```
+
+**2. Create Nginx Configuration**
+
+```bash
+sudo nano /etc/nginx/sites-available/mcp
+```
+
+```nginx
+server {
+    listen 80;
+    server_name mcp.yourcompany.com;
+
+    # Redirect HTTP to HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name mcp.yourcompany.com;
+
+    # SSL certificates (Certbot will fill these in)
+    ssl_certificate /etc/letsencrypt/live/mcp.yourcompany.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.yourcompany.com/privkey.pem;
+
+    # Security headers
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+
+    location / {
+        proxy_pass http://127.0.0.1:8200;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**3. Enable Site and Get SSL Certificate**
+
+```bash
+# Enable the site
+sudo ln -s /etc/nginx/sites-available/mcp /etc/nginx/sites-enabled/
+
+# Test config
+sudo nginx -t
+
+# Get free SSL certificate from Let's Encrypt
+sudo certbot --nginx -d mcp.yourcompany.com
+
+# Reload nginx
+sudo systemctl reload nginx
+```
+
+**4. Open Firewall**
+
+```bash
+sudo ufw allow 'Nginx Full'
+sudo ufw delete allow 8200  # Remove direct access to MCP port
+```
+
+Your MCP server is now accessible at `https://mcp.yourcompany.com`
+
+### Alternative: Caddy (Automatic HTTPS)
+
+Caddy handles SSL certificates automatically:
+
+```bash
+# Install Caddy
+sudo apt install caddy
+
+# Edit Caddyfile
+sudo nano /etc/caddy/Caddyfile
+```
+
+```
+mcp.yourcompany.com {
+    reverse_proxy localhost:8200
+}
+```
+
+```bash
+sudo systemctl reload caddy
+```
+
+That's it - Caddy automatically obtains and renews SSL certificates.
+
 ### Network Security
 
-1. **Firewall**: Only allow connections from UAVCrew IP addresses
+1. **Firewall**: Only allow HTTPS traffic
    ```bash
-   # Example: UFW
-   sudo ufw allow from 34.xxx.xxx.xxx to any port 8200
+   sudo ufw allow 443/tcp
+   sudo ufw enable
    ```
 
-2. **HTTPS**: Use a reverse proxy (nginx/caddy) with TLS
-   ```nginx
-   server {
-       listen 443 ssl;
-       server_name mcp.yourcompany.com;
-
-       ssl_certificate /path/to/cert.pem;
-       ssl_certificate_key /path/to/key.pem;
-
-       location / {
-           proxy_pass http://127.0.0.1:8200;
-       }
-   }
-   ```
-
-3. **API Key**: Set a strong `MCP_API_KEY` and share it with UAVCrew
+2. **API Key**: Set a strong `MCP_API_KEY` in your `.env` file
 
 ### Data Security
 
