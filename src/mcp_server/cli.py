@@ -6,6 +6,9 @@ Interactive setup wizard and configuration tools.
 Usage:
     uavcrew status             # Check installation and service status
     uavcrew setup              # Interactive configuration wizard
+    uavcrew keys list          # Show configured API keys
+    uavcrew keys add <token>   # Add an API key
+    uavcrew keys remove <key>  # Remove an API key
     uavcrew map-data           # Configure data source mappings
     uavcrew check              # Validate current configuration
     uavcrew generate-systemd   # Generate systemd unit file
@@ -762,6 +765,191 @@ def status():
             console.print(f"  → Restart: [cyan]{restart_cmd}[/cyan]")
         console.print(f"  → Check config: [cyan]uavcrew check[/cyan]")
         console.print(f"  → View logs: [cyan]sudo journalctl -u {SERVICE_NAME} -f[/cyan]")
+
+
+# =============================================================================
+# Keys Management
+# =============================================================================
+
+keys_app = typer.Typer(help="Manage API keys for UAVCrew connections.")
+app.add_typer(keys_app, name="keys")
+
+
+def _get_all_keys(env_vars: dict) -> list[str]:
+    """Get all configured API keys from env vars."""
+    keys = []
+
+    # Single key
+    single = env_vars.get("MCP_API_KEY", "").strip()
+    if single:
+        keys.append(single)
+
+    # Multiple keys
+    multi = env_vars.get("MCP_API_KEYS", "").strip()
+    if multi:
+        for k in multi.split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+
+    return keys
+
+
+def _save_keys(env_path: Path, keys: list[str]) -> None:
+    """Save keys back to .env file."""
+    if not env_path.exists():
+        console.print("[red]Error: .env file not found. Run 'uavcrew setup' first.[/red]")
+        raise typer.Exit(1)
+
+    # Read current file
+    with open(env_path) as f:
+        lines = f.readlines()
+
+    # Update or add key lines
+    new_lines = []
+    found_api_key = False
+    found_api_keys = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("MCP_API_KEY="):
+            # Keep first key in MCP_API_KEY for backwards compat
+            if keys:
+                new_lines.append(f"MCP_API_KEY={keys[0]}\n")
+            else:
+                new_lines.append("MCP_API_KEY=\n")
+            found_api_key = True
+        elif stripped.startswith("MCP_API_KEYS="):
+            # Put additional keys in MCP_API_KEYS
+            if len(keys) > 1:
+                new_lines.append(f"MCP_API_KEYS={','.join(keys[1:])}\n")
+            else:
+                new_lines.append("MCP_API_KEYS=\n")
+            found_api_keys = True
+        else:
+            new_lines.append(line)
+
+    # Add lines if not found
+    if not found_api_key:
+        new_lines.append(f"\nMCP_API_KEY={keys[0] if keys else ''}\n")
+    if not found_api_keys and len(keys) > 1:
+        new_lines.append(f"MCP_API_KEYS={','.join(keys[1:])}\n")
+
+    # Write back
+    with open(env_path, "w") as f:
+        f.writelines(new_lines)
+
+
+def _mask_key(key: str) -> str:
+    """Mask a key for display, showing first 8 and last 4 chars."""
+    if len(key) <= 12:
+        return key[:4] + "****"
+    return key[:8] + "****" + key[-4:]
+
+
+@keys_app.command("list")
+def keys_list():
+    """Show configured API keys."""
+    env_path = Path.cwd() / ".env"
+
+    if not env_path.exists():
+        console.print("[red]No .env file found. Run 'uavcrew setup' first.[/red]")
+        raise typer.Exit(1)
+
+    env_vars = load_env_file(env_path)
+    keys = _get_all_keys(env_vars)
+
+    if not keys:
+        console.print("[yellow]No API keys configured.[/yellow]")
+        console.print("Add one with: [cyan]uavcrew keys add <token>[/cyan]")
+        return
+
+    console.print(f"\n[bold]Configured API Keys ({len(keys)}):[/bold]\n")
+
+    table = Table()
+    table.add_column("#", style="dim")
+    table.add_column("Key (masked)", style="cyan")
+    table.add_column("Source", style="dim")
+
+    for i, key in enumerate(keys, 1):
+        source = "MCP_API_KEY" if i == 1 else "MCP_API_KEYS"
+        table.add_row(str(i), _mask_key(key), source)
+
+    console.print(table)
+    console.print("\n[dim]Keys are used to authenticate requests from UAVCrew instances.[/dim]")
+
+
+@keys_app.command("add")
+def keys_add(token: str = typer.Argument(..., help="API token from UAVCrew dashboard")):
+    """Add an API key."""
+    env_path = Path.cwd() / ".env"
+
+    if not env_path.exists():
+        console.print("[red]No .env file found. Run 'uavcrew setup' first.[/red]")
+        raise typer.Exit(1)
+
+    env_vars = load_env_file(env_path)
+    keys = _get_all_keys(env_vars)
+
+    # Check if already exists
+    if token in keys:
+        console.print("[yellow]This key is already configured.[/yellow]")
+        return
+
+    # Add key
+    keys.append(token)
+    _save_keys(env_path, keys)
+
+    console.print(f"[green]✓[/green] Added key: {_mask_key(token)}")
+    console.print(f"[dim]Total keys: {len(keys)}[/dim]")
+    console.print("\n[yellow]Restart the server to apply:[/yellow]")
+    console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+
+
+@keys_app.command("remove")
+def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to remove (first 8+ chars)")):
+    """Remove an API key by prefix match."""
+    env_path = Path.cwd() / ".env"
+
+    if not env_path.exists():
+        console.print("[red]No .env file found.[/red]")
+        raise typer.Exit(1)
+
+    env_vars = load_env_file(env_path)
+    keys = _get_all_keys(env_vars)
+
+    if not keys:
+        console.print("[yellow]No keys configured.[/yellow]")
+        return
+
+    # Find matching key
+    matches = [k for k in keys if k.startswith(key_prefix)]
+
+    if not matches:
+        console.print(f"[red]No key found matching '{key_prefix}'[/red]")
+        console.print("Use [cyan]uavcrew keys list[/cyan] to see configured keys.")
+        return
+
+    if len(matches) > 1:
+        console.print(f"[yellow]Multiple keys match '{key_prefix}':[/yellow]")
+        for m in matches:
+            console.print(f"  {_mask_key(m)}")
+        console.print("Provide more characters to match exactly one key.")
+        return
+
+    # Remove the key
+    key_to_remove = matches[0]
+    keys.remove(key_to_remove)
+    _save_keys(env_path, keys)
+
+    console.print(f"[green]✓[/green] Removed key: {_mask_key(key_to_remove)}")
+    console.print(f"[dim]Remaining keys: {len(keys)}[/dim]")
+
+    if keys:
+        console.print("\n[yellow]Restart the server to apply:[/yellow]")
+        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+    else:
+        console.print("\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]")
 
 
 @app.command()
