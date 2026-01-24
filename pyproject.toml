@@ -12,6 +12,8 @@ dependencies = [
     "fastapi>=0.109.0",
     "uvicorn>=0.27.0",
     "httpx>=0.26.0",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +37,7 @@ dev = [
 [project.scripts]
 mcp-server = "mcp_server.server:main"
 mcp-http-server = "mcp_server.http_server:main"
+uavcrew = "mcp_server.cli:app"
 
 [build-system]
 requires = ["hatchling"]

@@ -99,3 +99,88 @@ class MaintenanceRecord(Base):
     hours_at_service: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# =============================================================================
+# Certification Verification Models (WRITE support for CONCORD)
+# =============================================================================
+
+class FAAVerification(Base):
+    """FAA certification verification record.
+
+    Stores results from CONCORD's FAA verification checks.
+    """
+    __tablename__ = "faa_verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pilot_id: Mapped[str] = mapped_column(String(50))
+    verification_status: Mapped[str] = mapped_column(String(20))  # valid, invalid, expired, not_found
+    is_authorized: Mapped[bool] = mapped_column(Boolean, default=False)
+    certificate_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verification_source: Mapped[str] = mapped_column(String(50), default="faa_airmen_inquiry")
+    verification_details: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    verified_by: Mapped[str] = mapped_column(String(100), default="CONCORD")
+    verified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class VerificationAudit(Base):
+    """Audit trail for verification events.
+
+    Records all verification actions for compliance tracking.
+    """
+    __tablename__ = "verification_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_type: Mapped[str] = mapped_column(String(50))  # faa_check, training_update, warning_flag
+    entity_type: Mapped[str] = mapped_column(String(50))  # pilot, aircraft, flight
+    entity_id: Mapped[str] = mapped_column(String(50))
+    action: Mapped[str] = mapped_column(String(100))
+    result: Mapped[str] = mapped_column(String(20))  # success, failure, warning
+    details: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    performed_by: Mapped[str] = mapped_column(String(100))  # Agent name (CONCORD, TUCKER, etc.)
+    job_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Workflow job reference
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TrainingRecord(Base):
+    """Pilot training and recurrent training records."""
+    __tablename__ = "training_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pilot_id: Mapped[str] = mapped_column(String(50))
+    training_type: Mapped[str] = mapped_column(String(50))  # initial, recurrent, specialized
+    course_name: Mapped[str] = mapped_column(String(200))
+    provider: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    completion_date: Mapped[date] = mapped_column(Date)
+    expiry_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    certificate_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="current")  # current, expiring, expired
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="SYSTEM")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CertificationWarning(Base):
+    """Certification warnings and alerts.
+
+    Flags pilots/aircraft needing attention for certification issues.
+    """
+    __tablename__ = "certification_warnings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(50))  # pilot, aircraft
+    entity_id: Mapped[str] = mapped_column(String(50))
+    warning_type: Mapped[str] = mapped_column(String(50))  # expiring, expired, invalid, missing_training
+    severity: Mapped[str] = mapped_column(String(20))  # critical, high, medium, low
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    flagged_by: Mapped[str] = mapped_column(String(100), default="CONCORD")
+    job_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
