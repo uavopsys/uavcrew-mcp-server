@@ -24,20 +24,13 @@ This MCP server runs in **your infrastructure** and provides secure, real-time a
 
 ## Prerequisites
 
-Before setting up the MCP server, you need a UAVCrew account:
+Before setting up the MCP server, you need:
 
-1. **Log in** to your UAVCrew account at https://www.uavcrew.ai/accounts/login/
-2. **Create an API key** at Dashboard → API Keys (`/dashboard/api-keys/`)
+1. **A UAVCrew account** - Sign up at https://www.uavcrew.ai/
+2. **An API key with `mcp:register` scope** - Create one at Dashboard → API Keys
    - Click "Create API Key"
-   - Give it a name (e.g., "MCP Server")
+   - Check the **MCP Register** permission
    - Save the key securely - it's only shown once
-3. **Register your MCP server** at Dashboard → MCP Servers (`/dashboard/mcp/`)
-   - Click "Register MCP Server"
-   - Enter a name (e.g., "Production Server")
-   - Select the environment: **Development**, **UAT**, or **Production**
-   - Enter your server's public URL (e.g., `https://mcp.yourcompany.com`)
-   - **Copy the connection token** - it's only shown once!
-   - Use this token as your `MCP_API_KEY` environment variable
 
 ---
 
@@ -46,7 +39,7 @@ Before setting up the MCP server, you need a UAVCrew account:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/uavcrew/uavcrew-mcp-server.git
+git clone https://github.com/aelfakih/uavcrew-mcp-server.git
 cd uavcrew-mcp-server
 ```
 
@@ -64,12 +57,20 @@ source venv/bin/activate  # Linux/Mac
 pip install -e .
 ```
 
-### 4. Configure Environment
+### 4. Run the Setup Wizard
+
+The interactive setup wizard configures your database, registers with UAVCrew, and generates your `.env` file:
 
 ```bash
-cp .env.example .env
-# Edit .env with your settings
+uavcrew setup --full
 ```
+
+The wizard will:
+1. **Configure your database** - Choose SQLite, PostgreSQL, MySQL, SQL Server, or Oracle
+2. **Connect to UAVCrew** - Use your API key to auto-register (recommended) or paste a manual token
+3. **Set server options** - Host, port, and demo data settings
+4. **Validate configuration** - Test database connection and verify settings
+5. **Generate systemd service** - Optional, for production deployment
 
 ### 5. Run the Server
 
@@ -452,7 +453,7 @@ python -c "from mcp_server.database import get_db; print(get_db())"
 ## Support
 
 - **Documentation**: https://docs.uavcrew.ai/mcp
-- **Issues**: https://github.com/uavcrew/uavcrew-mcp-server/issues
+- **Issues**: https://github.com/aelfakih/uavcrew-mcp-server/issues
 - **Email**: support@uavcrew.ai
 
 ---
