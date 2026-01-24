@@ -1016,37 +1016,59 @@ def _run_check(env_path: Optional[Path] = None) -> bool:
         success, message = test_database_connection(db_url)
         if success:
             console.print("  [green]✓[/green] Connection successful")
-
-            # Test the raw database tools
-            try:
-                from .tools.raw_database import list_tables, describe_table
-
-                result = list_tables()
-                if "error" in result:
-                    console.print(f"  [red]✗[/red] list_tables failed: {result['error']}")
-                    all_passed = False
-                else:
-                    table_count = result.get("count", 0)
-                    console.print(f"  [green]✓[/green] list_tables works ({table_count} tables)")
-
-                    # Test describe_table on first table if any exist
-                    tables = result.get("tables", [])
-                    if tables:
-                        first_table = tables[0]["name"]
-                        desc_result = describe_table(first_table)
-                        if "error" in desc_result:
-                            console.print(f"  [red]✗[/red] describe_table failed: {desc_result['error']}")
-                            all_passed = False
-                        else:
-                            col_count = len(desc_result.get("columns", []))
-                            console.print(f"  [green]✓[/green] describe_table works ({col_count} columns in '{first_table}')")
-
-            except Exception as e:
-                console.print(f"  [red]✗[/red] Tool import failed: {e}")
-                all_passed = False
         else:
             console.print(f"  [red]✗[/red] Connection failed: {message}")
             all_passed = False
+
+        # Test the MCP tools
+        console.print("\n[bold]Tools:[/bold]")
+
+        if not success:
+            console.print("  [dim]–[/dim] Skipped (database connection failed)")
+        else:
+            try:
+                from .tools.raw_database import list_tables, describe_table, query_table
+
+                # Test list_tables
+                result = list_tables()
+                if "error" in result:
+                    console.print(f"  [red]✗[/red] list_tables: {result['error']}")
+                    all_passed = False
+                    tables = []
+                else:
+                    table_count = result.get("count", 0)
+                    tables = result.get("tables", [])
+                    console.print(f"  [green]✓[/green] list_tables ({table_count} tables)")
+
+                # Test describe_table
+                if tables:
+                    first_table = tables[0]["name"]
+                    desc_result = describe_table(first_table)
+                    if "error" in desc_result:
+                        console.print(f"  [red]✗[/red] describe_table: {desc_result['error']}")
+                        all_passed = False
+                    else:
+                        col_count = len(desc_result.get("columns", []))
+                        console.print(f"  [green]✓[/green] describe_table ({col_count} columns in '{first_table}')")
+                else:
+                    console.print("  [dim]–[/dim] describe_table skipped (no tables)")
+
+                # Test query_table
+                if tables:
+                    first_table = tables[0]["name"]
+                    query_result = query_table(first_table, limit=1)
+                    if "error" in query_result:
+                        console.print(f"  [red]✗[/red] query_table: {query_result['error']}")
+                        all_passed = False
+                    else:
+                        row_count = query_result.get("count", 0)
+                        console.print(f"  [green]✓[/green] query_table ({row_count} row from '{first_table}')")
+                else:
+                    console.print("  [dim]–[/dim] query_table skipped (no tables)")
+
+            except Exception as e:
+                console.print(f"  [red]✗[/red] Tool error: {e}")
+                all_passed = False
 
     # Security checks
     console.print("\n[bold]Security:[/bold]")
