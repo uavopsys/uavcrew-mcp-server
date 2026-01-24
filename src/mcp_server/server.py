@@ -1,6 +1,6 @@
 """MCP Server for drone compliance data.
 
-Provides 3 generic database tools + file access tools.
+Provides raw database tools + file access tools.
 All database operations are READ-ONLY.
 """
 
@@ -12,7 +12,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-from .tools.database import list_entities, describe_entity, query_entity
+from .tools.raw_database import list_tables, describe_table, query_table
 from .tools.list_files import list_files
 from .tools.read_file import read_file
 from .tools.file_metadata import get_file_metadata
@@ -25,10 +25,10 @@ server = Server("compliance-mcp-server")
 async def handle_list_tools() -> list[Tool]:
     """List available MCP tools."""
     return [
-        # === Database Tools (Generic, Read-Only) ===
+        # === Database Tools (Raw, Read-Only) ===
         Tool(
-            name="list_entities",
-            description="List all available data entities (tables). Call this first to see what data is available.",
+            name="list_tables",
+            description="List all tables in the database with row counts. Call this first to discover the schema.",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -36,50 +36,49 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="describe_entity",
-            description="Describe the fields available for a specific entity. Call this to understand what data an entity contains.",
+            name="describe_table",
+            description="Describe a table's columns with types, primary keys, foreign keys, and sample data.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "entity": {
+                    "table": {
                         "type": "string",
-                        "description": "Entity name (e.g., pilots, aircraft, flights)"
+                        "description": "Table name to describe"
                     }
                 },
-                "required": ["entity"]
+                "required": ["table"]
             }
         ),
         Tool(
-            name="query_entity",
-            description="Query data from an entity. Get single record by ID, or multiple records with filters.",
+            name="query_table",
+            description="Query raw data from a table. Supports column selection, WHERE clauses, ORDER BY, and LIMIT.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "entity": {
+                    "table": {
                         "type": "string",
-                        "description": "Entity name (e.g., pilots, aircraft, flights)"
+                        "description": "Table name to query"
                     },
-                    "id": {
-                        "type": "string",
-                        "description": "Optional: Get single record by ID"
-                    },
-                    "filters": {
-                        "type": "object",
-                        "description": "Optional: Filter conditions as {field: value}",
-                        "additionalProperties": True
-                    },
-                    "fields": {
+                    "columns": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional: Specific fields to return"
+                        "description": "Optional: Specific columns to return (default: all)"
+                    },
+                    "where": {
+                        "type": "string",
+                        "description": "Optional: WHERE clause (e.g., \"status = 'active'\")"
+                    },
+                    "order_by": {
+                        "type": "string",
+                        "description": "Optional: ORDER BY clause (e.g., \"created_at DESC\")"
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum records to return (default: 100)",
+                        "description": "Maximum rows to return (default: 100, max: 1000)",
                         "default": 100
                     }
                 },
-                "required": ["entity"]
+                "required": ["table"]
             }
         ),
         # === File Access Tools ===
@@ -151,19 +150,19 @@ async def handle_list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool invocations."""
     try:
-        # Database tools (read-only)
-        if name == "list_entities":
-            result = list_entities()
+        # Database tools (raw, read-only)
+        if name == "list_tables":
+            result = list_tables()
 
-        elif name == "describe_entity":
-            result = describe_entity(arguments["entity"])
+        elif name == "describe_table":
+            result = describe_table(arguments["table"])
 
-        elif name == "query_entity":
-            result = query_entity(
-                entity=arguments["entity"],
-                id=arguments.get("id"),
-                filters=arguments.get("filters"),
-                fields=arguments.get("fields"),
+        elif name == "query_table":
+            result = query_table(
+                table=arguments["table"],
+                columns=arguments.get("columns"),
+                where=arguments.get("where"),
+                order_by=arguments.get("order_by"),
                 limit=arguments.get("limit", 100),
             )
 

@@ -4,10 +4,7 @@ This provides an HTTP/JSON interface to the MCP tools,
 allowing UAVCrew to call MCP servers over the network.
 
 Tools available:
-- Schema discovery: list_tables, describe_table, query_table
-  (Raw database access for UAVCrew to discover and map client schema)
-- Mapped entities: list_entities, describe_entity, query_entity
-  (Pre-mapped entity access, requires entity_mapping.yaml configuration)
+- Database: list_tables, describe_table, query_table
 - File access: list_files, read_file, get_file_metadata
 """
 
@@ -19,7 +16,6 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
 from . import __version__
-from .tools.database import list_entities, describe_entity, query_entity
 from .tools.raw_database import list_tables, describe_table, query_table
 from .tools.list_files import list_files
 from .tools.read_file import read_file
@@ -119,7 +115,7 @@ async def call_tool(
     arguments = request.arguments
 
     try:
-        # Raw database tools (schema discovery)
+        # Database tools (raw, read-only)
         if tool_name == "list_tables":
             result = list_tables()
 
@@ -138,28 +134,6 @@ async def call_tool(
                 columns=arguments.get("columns"),
                 where=arguments.get("where"),
                 order_by=arguments.get("order_by"),
-                limit=arguments.get("limit", 100),
-            )
-
-        # Mapped entity tools (read-only)
-        elif tool_name == "list_entities":
-            result = list_entities()
-
-        elif tool_name == "describe_entity":
-            entity = arguments.get("entity")
-            if not entity:
-                return {"success": False, "error": "Missing required argument: entity"}
-            result = describe_entity(entity)
-
-        elif tool_name == "query_entity":
-            entity = arguments.get("entity")
-            if not entity:
-                return {"success": False, "error": "Missing required argument: entity"}
-            result = query_entity(
-                entity=entity,
-                id=arguments.get("id"),
-                filters=arguments.get("filters"),
-                fields=arguments.get("fields"),
                 limit=arguments.get("limit", 100),
             )
 
@@ -204,17 +178,17 @@ async def call_tool(
 
 
 @app.get("/mcp/tools")
-async def list_tools(authorization: str | None = Header(None)):
+async def list_mcp_tools(authorization: str | None = Header(None)):
     """List available MCP tools."""
     if not verify_auth(authorization):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
     return {
         "tools": [
-            # Raw database tools (schema discovery)
+            # Database tools (raw, read-only)
             {
                 "name": "list_tables",
-                "description": "List all tables in the database. Returns table names and row counts. Call this first to discover the schema.",
+                "description": "List all tables in the database with row counts. Call this first to discover the schema.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {},
@@ -234,7 +208,7 @@ async def list_tools(authorization: str | None = Header(None)):
             },
             {
                 "name": "query_table",
-                "description": "Query raw data from a table. Supports column selection, WHERE clauses, and ORDER BY.",
+                "description": "Query raw data from a table. Supports column selection, WHERE clauses, ORDER BY, and LIMIT.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -245,42 +219,6 @@ async def list_tools(authorization: str | None = Header(None)):
                         "limit": {"type": "integer", "description": "Maximum rows (default: 100, max: 1000)", "default": 100}
                     },
                     "required": ["table"]
-                }
-            },
-            # Mapped entity tools (read-only)
-            {
-                "name": "list_entities",
-                "description": "List all available mapped data entities. Only available if entity mapping is configured.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "describe_entity",
-                "description": "Describe the fields available for a mapped entity.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "entity": {"type": "string", "description": "Entity name (e.g., pilots, aircraft, flights)"}
-                    },
-                    "required": ["entity"]
-                }
-            },
-            {
-                "name": "query_entity",
-                "description": "Query data from a mapped entity. Get single record by ID, or multiple records with filters.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "entity": {"type": "string", "description": "Entity name"},
-                        "id": {"type": "string", "description": "Optional: Get single record by ID"},
-                        "filters": {"type": "object", "description": "Optional: Filter conditions as {field: value}"},
-                        "fields": {"type": "array", "items": {"type": "string"}, "description": "Optional: Specific fields to return"},
-                        "limit": {"type": "integer", "description": "Maximum records (default: 100)", "default": 100}
-                    },
-                    "required": ["entity"]
                 }
             },
             # File access tools

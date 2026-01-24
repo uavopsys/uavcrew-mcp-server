@@ -71,7 +71,6 @@ sudo systemctl start mcp-server
 | `uavcrew keys list` | Show configured API keys |
 | `uavcrew keys add <token>` | Add an API key from UAVCrew |
 | `uavcrew keys remove <prefix>` | Remove an API key |
-| `uavcrew map-data` | Configure database schema mapping |
 | `uavcrew generate-systemd` | Generate systemd unit file |
 
 ---
@@ -166,16 +165,6 @@ These allow UAVCrew to discover your database structure:
 | `list_tables` | List all tables with row counts |
 | `describe_table` | Get columns, types, primary keys, foreign keys, and sample data |
 | `query_table` | Query raw data with column selection, WHERE, ORDER BY, and LIMIT |
-
-### Mapped Entity Tools
-
-Once UAVCrew maps your schema, these provide structured access:
-
-| Tool | Description |
-|------|-------------|
-| `list_entities` | List available mapped entities |
-| `describe_entity` | Describe entity fields |
-| `query_entity` | Query entity data with filters |
 
 ### File Access Tools
 

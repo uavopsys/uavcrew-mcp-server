@@ -9,7 +9,6 @@ Usage:
     uavcrew keys list          # Show configured API keys
     uavcrew keys add <token>   # Add an API key
     uavcrew keys remove <key>  # Remove an API key
-    uavcrew map-data           # Configure data source mappings
     uavcrew check              # Validate current configuration
     uavcrew generate-systemd   # Generate systemd unit file
 """
@@ -18,11 +17,9 @@ import os
 import secrets
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import yaml
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -295,293 +292,6 @@ def generate_apache_config(domain: str) -> str:
     </Location>
 </VirtualHost>
 """
-
-
-# =============================================================================
-# Data Mapping Schema
-# =============================================================================
-
-# Define the compliance data schema that MCP tools expect
-DATA_SCHEMA = {
-    "pilots": {
-        "description": "Pilot certifications and credentials",
-        "fields": {
-            "id": {"type": "string", "required": True, "description": "Unique pilot identifier"},
-            "name": {"type": "string", "required": True, "description": "Pilot's full name"},
-            "certificate_type": {"type": "string", "required": True, "description": "Certificate type (Part 107, Part 61, etc.)"},
-            "certificate_number": {"type": "string", "required": True, "description": "FAA certificate number"},
-            "certificate_expiry": {"type": "date", "required": True, "description": "Certificate expiration date"},
-            "certificate_valid": {"type": "boolean", "required": False, "description": "Whether certificate is currently valid"},
-            "flight_hours_total": {"type": "float", "required": False, "description": "Total flight hours"},
-            "flight_hours_90_days": {"type": "float", "required": False, "description": "Flight hours in last 90 days"},
-        },
-    },
-    "aircraft": {
-        "description": "Aircraft/drone registration and status",
-        "fields": {
-            "id": {"type": "string", "required": True, "description": "Unique aircraft identifier"},
-            "registration": {"type": "string", "required": True, "description": "FAA registration number (N-number)"},
-            "make_model": {"type": "string", "required": True, "description": "Aircraft make and model"},
-            "serial_number": {"type": "string", "required": True, "description": "Manufacturer serial number"},
-            "registration_expiry": {"type": "date", "required": True, "description": "Registration expiration date"},
-            "registration_valid": {"type": "boolean", "required": False, "description": "Whether registration is current"},
-            "total_flight_hours": {"type": "float", "required": False, "description": "Total airframe hours"},
-            "last_maintenance_date": {"type": "date", "required": False, "description": "Date of last maintenance"},
-        },
-    },
-    "flights": {
-        "description": "Flight records with telemetry data",
-        "fields": {
-            "id": {"type": "string", "required": True, "description": "Unique flight identifier"},
-            "pilot_id": {"type": "string", "required": True, "description": "Reference to pilot"},
-            "aircraft_id": {"type": "string", "required": True, "description": "Reference to aircraft"},
-            "flight_datetime": {"type": "datetime", "required": True, "description": "Flight start date/time"},
-            "duration_seconds": {"type": "integer", "required": True, "description": "Flight duration in seconds"},
-            "max_altitude_ft": {"type": "float", "required": False, "description": "Maximum altitude AGL in feet"},
-            "max_speed_mph": {"type": "float", "required": False, "description": "Maximum ground speed in mph"},
-            "takeoff_lat": {"type": "float", "required": False, "description": "Takeoff latitude"},
-            "takeoff_lon": {"type": "float", "required": False, "description": "Takeoff longitude"},
-        },
-    },
-    "missions": {
-        "description": "Mission planning and authorization data",
-        "fields": {
-            "id": {"type": "string", "required": True, "description": "Unique mission identifier"},
-            "flight_id": {"type": "string", "required": False, "description": "Reference to associated flight"},
-            "purpose": {"type": "string", "required": True, "description": "Mission purpose/type"},
-            "location_name": {"type": "string", "required": True, "description": "Location description"},
-            "location_lat": {"type": "float", "required": True, "description": "Mission center latitude"},
-            "location_lon": {"type": "float", "required": True, "description": "Mission center longitude"},
-            "airspace_class": {"type": "string", "required": False, "description": "Airspace classification (A-G)"},
-            "laanc_authorization_id": {"type": "string", "required": False, "description": "LAANC authorization ID if required"},
-            "planned_altitude_ft": {"type": "float", "required": False, "description": "Planned max altitude in feet"},
-        },
-    },
-    "maintenance": {
-        "description": "Aircraft maintenance records",
-        "fields": {
-            "id": {"type": "string", "required": True, "description": "Unique maintenance record ID"},
-            "aircraft_id": {"type": "string", "required": True, "description": "Reference to aircraft"},
-            "date": {"type": "date", "required": True, "description": "Maintenance date"},
-            "type": {"type": "string", "required": True, "description": "Maintenance type (scheduled, unscheduled, repair)"},
-            "description": {"type": "string", "required": True, "description": "Work performed"},
-            "technician": {"type": "string", "required": False, "description": "Technician name"},
-            "hours_at_service": {"type": "float", "required": False, "description": "Airframe hours at service"},
-        },
-    },
-}
-
-
-def load_data_mapping(path: Path) -> dict:
-    """Load existing data mapping from YAML file."""
-    if path.exists():
-        with open(path) as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
-
-def save_data_mapping(path: Path, mapping: dict) -> None:
-    """Save data mapping to YAML file."""
-    with open(path, "w") as f:
-        yaml.dump(mapping, f, default_flow_style=False, sort_keys=False)
-
-
-def get_database_tables(db_url: str) -> list[str]:
-    """Get list of tables from database."""
-    try:
-        from sqlalchemy import create_engine, inspect
-        engine = create_engine(db_url)
-        inspector = inspect(engine)
-        return inspector.get_table_names()
-    except Exception as e:
-        console.print(f"  [yellow]Could not list tables: {e}[/yellow]")
-        return []
-
-
-def get_table_columns(db_url: str, table_name: str) -> list[str]:
-    """Get list of columns from a table."""
-    try:
-        from sqlalchemy import create_engine, inspect
-        engine = create_engine(db_url)
-        inspector = inspect(engine)
-        columns = inspector.get_columns(table_name)
-        return [col["name"] for col in columns]
-    except Exception as e:
-        console.print(f"  [yellow]Could not list columns: {e}[/yellow]")
-        return []
-
-
-@app.command("map-data")
-def map_data():
-    """Configure data source mappings for your existing database schema."""
-    console.print(
-        Panel.fit(
-            "[bold blue]UAVCrew MCP Server - Data Mapping[/bold blue]\n\n"
-            "This wizard maps your existing database schema to the compliance data format.\n"
-            "UAVCrew needs to know where your pilots, aircraft, flights, and other data lives.",
-            border_style="blue",
-        )
-    )
-
-    mapping_path = Path.cwd() / "data_mapping.yaml"
-    env_path = Path.cwd() / ".env"
-
-    # Load existing mapping if available
-    existing = load_data_mapping(mapping_path)
-    if existing:
-        console.print("\n[yellow]Found existing data_mapping.yaml. Values will be used as defaults.[/yellow]")
-
-    # Load database URL from .env
-    db_url = None
-    if env_path.exists():
-        env_vars = load_env_file(env_path)
-        db_url = env_vars.get("DATABASE_URL")
-
-    if not db_url:
-        console.print("\n[red]No DATABASE_URL found in .env[/red]")
-        console.print("Run [cyan]uavcrew setup[/cyan] first to configure your database connection.")
-        raise typer.Exit(1)
-
-    # Get available tables
-    console.print("\n[bold]Connecting to database...[/bold]")
-    tables = get_database_tables(db_url)
-    if tables:
-        console.print(f"  [green]✓[/green] Found {len(tables)} tables: {', '.join(tables[:10])}{'...' if len(tables) > 10 else ''}")
-    else:
-        console.print("  [yellow]![/yellow] Could not list tables. You'll need to enter table names manually.")
-
-    mapping = {"version": "1.0", "source_type": "database", "entities": {}}
-
-    # =========================================================================
-    # Walk through each entity
-    # =========================================================================
-    for entity_name, entity_schema in DATA_SCHEMA.items():
-        console.print("\n" + "=" * 60)
-        console.print(f"[bold cyan]{entity_name.upper()}[/bold cyan] - {entity_schema['description']}")
-        console.print("=" * 60)
-
-        # Check if entity should be mapped
-        existing_entity = existing.get("entities", {}).get(entity_name, {})
-        default_enabled = bool(existing_entity.get("source_table"))
-
-        if not Confirm.ask(f"\n  Do you have {entity_name} data to map?", default=default_enabled):
-            console.print(f"  [dim]Skipping {entity_name}[/dim]")
-            continue
-
-        # Get source table
-        console.print(f"\n  [bold]Source Table[/bold]")
-        console.print(f"  Which table contains your {entity_name} data?")
-        if tables:
-            console.print(f"  Available tables: {', '.join(tables)}")
-
-        default_table = existing_entity.get("source_table", entity_name)
-        source_table = Prompt.ask(
-            f"  Table name",
-            default=default_table,
-        )
-
-        # Get columns from source table
-        columns = get_table_columns(db_url, source_table)
-        if columns:
-            console.print(f"  [green]✓[/green] Found columns: {', '.join(columns[:15])}{'...' if len(columns) > 15 else ''}")
-
-        # Map each field
-        console.print(f"\n  [bold]Column Mappings[/bold]")
-        console.print(f"  Map your columns to the compliance data format.")
-        console.print(f"  Press Enter to skip optional fields, or type '-' to explicitly skip.\n")
-
-        field_mappings = {}
-        existing_mappings = existing_entity.get("columns", {})
-
-        for field_name, field_info in entity_schema["fields"].items():
-            required = field_info["required"]
-            field_type = field_info["type"]
-            description = field_info["description"]
-
-            # Determine default value
-            default = existing_mappings.get(field_name, "")
-            if not default and field_name in columns:
-                default = field_name  # Auto-match if column name matches
-
-            # Format prompt
-            req_marker = "[red]*[/red]" if required else "[dim](optional)[/dim]"
-            type_hint = f"[dim]{field_type}[/dim]"
-
-            console.print(f"  {req_marker} [cyan]{field_name}[/cyan] {type_hint}")
-            console.print(f"      {description}")
-
-            column = Prompt.ask(
-                f"      Your column",
-                default=default,
-            )
-
-            if column and column != "-":
-                field_mappings[field_name] = column
-            elif required and not column:
-                console.print(f"      [yellow]Warning: {field_name} is required for compliance checks[/yellow]")
-
-        # Optional: Add custom WHERE clause
-        console.print(f"\n  [bold]Filter (Optional)[/bold]")
-        console.print(f"  Add a WHERE clause to filter records (e.g., 'status = active')")
-        default_filter = existing_entity.get("filter", "")
-        filter_clause = Prompt.ask(
-            f"  WHERE clause",
-            default=default_filter,
-        )
-
-        # Save entity mapping
-        mapping["entities"][entity_name] = {
-            "source_table": source_table,
-            "columns": field_mappings,
-        }
-        if filter_clause:
-            mapping["entities"][entity_name]["filter"] = filter_clause
-
-        console.print(f"\n  [green]✓[/green] Mapped {entity_name}: {source_table} → {len(field_mappings)} fields")
-
-    # =========================================================================
-    # Save mapping
-    # =========================================================================
-    console.print("\n" + "=" * 60)
-    console.print("[bold cyan]SAVE CONFIGURATION[/bold cyan]")
-    console.print("=" * 60)
-
-    # Show summary
-    console.print("\n[bold]Mapping Summary:[/bold]")
-    summary_table = Table()
-    summary_table.add_column("Entity", style="cyan")
-    summary_table.add_column("Source Table", style="white")
-    summary_table.add_column("Fields Mapped", style="green")
-
-    for entity_name, entity_config in mapping["entities"].items():
-        summary_table.add_row(
-            entity_name,
-            entity_config["source_table"],
-            str(len(entity_config["columns"])),
-        )
-
-    console.print(summary_table)
-
-    # Save
-    save_data_mapping(mapping_path, mapping)
-    console.print(f"\n  [green]✓[/green] Saved to {mapping_path}")
-
-    # =========================================================================
-    # Done
-    # =========================================================================
-    console.print("\n" + "=" * 60)
-    console.print(
-        Panel.fit(
-            "[bold green]Data Mapping Complete![/bold green]\n\n"
-            f"Configuration saved to: {mapping_path}\n\n"
-            "[bold]Next Steps:[/bold]\n"
-            "1. Review the mapping in data_mapping.yaml\n"
-            "2. Restart the MCP server to apply changes\n"
-            "3. Test with: [cyan]uavcrew check[/cyan]\n\n"
-            "[dim]The MCP server will now query your tables using this mapping.[/dim]",
-            border_style="green",
-        )
-    )
 
 
 # =============================================================================
@@ -1307,30 +1017,33 @@ def _run_check(env_path: Optional[Path] = None) -> bool:
         if success:
             console.print("  [green]✓[/green] Connection successful")
 
-            # Check tables and data
+            # Test the raw database tools
             try:
-                from sqlalchemy import create_engine, inspect, text
+                from .tools.raw_database import list_tables, describe_table
 
-                engine = create_engine(db_url)
-                inspector = inspect(engine)
-                tables = inspector.get_table_names()
-                console.print(f"  [green]✓[/green] Tables exist ({len(tables)} tables)")
-
-                # Count demo data
-                with engine.connect() as conn:
-                    pilots = conn.execute(text("SELECT COUNT(*) FROM pilots")).scalar()
-                    aircraft = conn.execute(
-                        text("SELECT COUNT(*) FROM aircraft")
-                    ).scalar()
-                    flights = conn.execute(text("SELECT COUNT(*) FROM flights")).scalar()
-                if pilots > 0:
-                    console.print(
-                        f"  [green]✓[/green] Data present ({pilots} pilots, {aircraft} aircraft, {flights} flights)"
-                    )
+                result = list_tables()
+                if "error" in result:
+                    console.print(f"  [red]✗[/red] list_tables failed: {result['error']}")
+                    all_passed = False
                 else:
-                    console.print("  [yellow]![/yellow] No data (run with SEED_DEMO_DATA=true)")
+                    table_count = result.get("count", 0)
+                    console.print(f"  [green]✓[/green] list_tables works ({table_count} tables)")
+
+                    # Test describe_table on first table if any exist
+                    tables = result.get("tables", [])
+                    if tables:
+                        first_table = tables[0]["name"]
+                        desc_result = describe_table(first_table)
+                        if "error" in desc_result:
+                            console.print(f"  [red]✗[/red] describe_table failed: {desc_result['error']}")
+                            all_passed = False
+                        else:
+                            col_count = len(desc_result.get("columns", []))
+                            console.print(f"  [green]✓[/green] describe_table works ({col_count} columns in '{first_table}')")
+
             except Exception as e:
-                console.print(f"  [yellow]![/yellow] Could not inspect tables: {e}")
+                console.print(f"  [red]✗[/red] Tool import failed: {e}")
+                all_passed = False
         else:
             console.print(f"  [red]✗[/red] Connection failed: {message}")
             all_passed = False
