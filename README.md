@@ -65,9 +65,8 @@ sudo systemctl start mcp-server
 
 | Command | Description |
 |---------|-------------|
+| `uavcrew status` | Check status, database connection, and tools |
 | `uavcrew setup` | Interactive configuration wizard |
-| `uavcrew status` | Check installation and service status |
-| `uavcrew check` | Validate current configuration |
 | `uavcrew keys list` | Show configured API keys |
 | `uavcrew keys add <token>` | Add an API key from UAVCrew |
 | `uavcrew keys remove <prefix>` | Remove an API key |
@@ -340,7 +339,7 @@ sudo journalctl -u mcp-server -f
 
 ```bash
 # Check configuration
-uavcrew check
+uavcrew status
 
 # View logs
 sudo journalctl -u mcp-server -f
@@ -356,7 +355,7 @@ sudo journalctl -u mcp-server -f
 
 ```bash
 # Test connection
-uavcrew check
+uavcrew status
 
 # Verify DATABASE_URL in .env
 cat .env | grep DATABASE_URL

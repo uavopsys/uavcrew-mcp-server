@@ -4,12 +4,11 @@ UAVCrew MCP Server CLI
 Interactive setup wizard and configuration tools.
 
 Usage:
-    uavcrew status             # Check installation and service status
+    uavcrew status             # Check status, database, and tools
     uavcrew setup              # Interactive configuration wizard
     uavcrew keys list          # Show configured API keys
     uavcrew keys add <token>   # Add an API key
     uavcrew keys remove <key>  # Remove an API key
-    uavcrew check              # Validate current configuration
     uavcrew generate-systemd   # Generate systemd unit file
 """
 
@@ -373,7 +372,7 @@ def _check_process_running(port: int = 8200) -> dict:
 
 @app.command()
 def status():
-    """Check MCP server installation and service status."""
+    """Check MCP server status, configuration, and tools."""
     console.print(
         Panel.fit(
             "[bold blue]UAVCrew MCP Server Status[/bold blue]",
@@ -382,48 +381,119 @@ def status():
     )
 
     env_path = Path.cwd() / ".env"
+    all_ok = True
 
     # ==========================================================================
-    # Configuration Status
+    # Configuration
     # ==========================================================================
     console.print("\n[bold]Configuration:[/bold]")
 
-    config_ok = True
     port = 8200
+    db_url = None
 
     if env_path.exists():
-        console.print(f"  [green]✓[/green] .env file exists")
+        console.print("  [green]✓[/green] .env file exists")
         env_vars = load_env_file(env_path)
 
-        # Check key variables
-        if env_vars.get("DATABASE_URL"):
-            console.print(f"  [green]✓[/green] DATABASE_URL configured")
-        else:
-            console.print(f"  [red]✗[/red] DATABASE_URL not set")
-            config_ok = False
+        # Load env vars for tool tests
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
 
-        # Check API keys (support both single and multiple)
+        db_url = env_vars.get("DATABASE_URL")
+        if db_url:
+            console.print("  [green]✓[/green] DATABASE_URL configured")
+        else:
+            console.print("  [red]✗[/red] DATABASE_URL not set")
+            all_ok = False
+
+        # Check API keys
         api_key = env_vars.get("MCP_API_KEY", "")
         api_keys = env_vars.get("MCP_API_KEYS", "")
         if api_key or api_keys:
             key_count = len([k for k in (api_key + "," + api_keys).split(",") if k.strip()])
             console.print(f"  [green]✓[/green] API key(s) configured ({key_count} key(s))")
         else:
-            console.print(f"  [yellow]![/yellow] No API keys configured (server will be open)")
+            console.print("  [yellow]![/yellow] No API keys configured (server will be open)")
 
         port = int(env_vars.get("MCP_PORT", "8200"))
         public_url = env_vars.get("MCP_PUBLIC_URL", "")
         if public_url:
             console.print(f"  [dim]Public URL: {public_url}[/dim]")
     else:
-        console.print(f"  [red]✗[/red] .env file not found")
-        console.print(f"  [dim]Run 'uavcrew setup' to configure[/dim]")
-        config_ok = False
+        console.print("  [red]✗[/red] .env file not found")
+        console.print("  [dim]Run 'uavcrew setup' to configure[/dim]")
+        all_ok = False
+
+    # ==========================================================================
+    # Database & Tools
+    # ==========================================================================
+    console.print("\n[bold]Database:[/bold]")
+
+    db_connected = False
+    if not db_url:
+        console.print("  [dim]–[/dim] Skipped (no DATABASE_URL)")
+    else:
+        success, message = test_database_connection(db_url)
+        if success:
+            console.print("  [green]✓[/green] Connection successful")
+            db_connected = True
+        else:
+            console.print(f"  [red]✗[/red] Connection failed: {message}")
+            all_ok = False
+
+    console.print("\n[bold]Tools:[/bold]")
+
+    if not db_connected:
+        console.print("  [dim]–[/dim] Skipped (no database connection)")
+    else:
+        try:
+            from .tools.raw_database import list_tables, describe_table, query_table
+
+            # Test list_tables
+            result = list_tables()
+            if "error" in result:
+                console.print(f"  [red]✗[/red] list_tables: {result['error']}")
+                all_ok = False
+                tables = []
+            else:
+                table_count = result.get("count", 0)
+                tables = result.get("tables", [])
+                console.print(f"  [green]✓[/green] list_tables ({table_count} tables)")
+
+            # Test describe_table
+            if tables:
+                first_table = tables[0]["name"]
+                desc_result = describe_table(first_table)
+                if "error" in desc_result:
+                    console.print(f"  [red]✗[/red] describe_table: {desc_result['error']}")
+                    all_ok = False
+                else:
+                    col_count = len(desc_result.get("columns", []))
+                    console.print(f"  [green]✓[/green] describe_table ({col_count} columns in '{first_table}')")
+            else:
+                console.print("  [dim]–[/dim] describe_table skipped (no tables)")
+
+            # Test query_table
+            if tables:
+                first_table = tables[0]["name"]
+                query_result = query_table(first_table, limit=1)
+                if "error" in query_result:
+                    console.print(f"  [red]✗[/red] query_table: {query_result['error']}")
+                    all_ok = False
+                else:
+                    row_count = query_result.get("count", 0)
+                    console.print(f"  [green]✓[/green] query_table ({row_count} row from '{first_table}')")
+            else:
+                console.print("  [dim]–[/dim] query_table skipped (no tables)")
+
+        except Exception as e:
+            console.print(f"  [red]✗[/red] Tool error: {e}")
+            all_ok = False
 
     # ==========================================================================
     # Service Status
     # ==========================================================================
-    console.print("\n[bold]Service Status:[/bold]")
+    console.print("\n[bold]Service:[/bold]")
 
     systemd = _check_systemd_service()
     process = _check_process_running(port)
@@ -432,49 +502,46 @@ def status():
     restart_cmd = None
 
     if systemd["installed"]:
-        console.print(f"  [green]✓[/green] Systemd service installed")
+        console.print("  [green]✓[/green] Systemd service installed")
 
         if systemd["enabled"]:
-            console.print(f"  [green]✓[/green] Service enabled (starts on boot)")
+            console.print("  [green]✓[/green] Service enabled (starts on boot)")
         else:
-            console.print(f"  [yellow]![/yellow] Service not enabled")
+            console.print("  [yellow]![/yellow] Service not enabled")
 
         if systemd["running"]:
-            console.print(f"  [green]✓[/green] Service running")
+            console.print("  [green]✓[/green] Service running")
             running = True
             restart_cmd = f"sudo systemctl restart {SERVICE_NAME}"
         else:
             console.print(f"  [red]✗[/red] Service not running ({systemd['status']})")
             restart_cmd = f"sudo systemctl start {SERVICE_NAME}"
+            all_ok = False
     else:
-        console.print(f"  [dim]–[/dim] Systemd service not installed")
+        console.print("  [dim]–[/dim] Systemd service not installed")
 
-        # Check for manual process
         if process["running"]:
             console.print(f"  [green]✓[/green] Server running (manual, PID: {process['pid'] or 'unknown'})")
             running = True
             restart_cmd = f"# Kill PID {process['pid']} and restart manually"
         else:
-            console.print(f"  [red]✗[/red] Server not running")
+            console.print("  [red]✗[/red] Server not running")
+            all_ok = False
 
     # ==========================================================================
-    # Summary & Next Steps
+    # Summary
     # ==========================================================================
-    console.print("\n[bold]Actions:[/bold]")
-
-    if not config_ok:
-        console.print(f"  → Run [cyan]uavcrew setup[/cyan] to configure the server")
-    elif not systemd["installed"]:
-        console.print(f"  → Run [cyan]uavcrew generate-systemd[/cyan] to create service")
-        console.print(f"  → Or start manually: [cyan]mcp-http-server[/cyan]")
-    elif not running:
-        console.print(f"  → Start: [cyan]{restart_cmd}[/cyan]")
+    if all_ok:
+        console.print("\n[bold green]All checks passed![/bold green]")
     else:
-        console.print(f"  [green]Server is running and configured![/green]")
-        if restart_cmd:
-            console.print(f"  → Restart: [cyan]{restart_cmd}[/cyan]")
-        console.print(f"  → Check config: [cyan]uavcrew check[/cyan]")
-        console.print(f"  → View logs: [cyan]sudo journalctl -u {SERVICE_NAME} -f[/cyan]")
+        console.print("\n[bold red]Some checks failed.[/bold red]")
+
+    if not env_path.exists():
+        console.print(f"  → Run [cyan]uavcrew setup[/cyan] to configure")
+    elif not systemd["installed"] and not running:
+        console.print(f"  → Run [cyan]uavcrew generate-systemd[/cyan] to create service")
+    elif not running and restart_cmd:
+        console.print(f"  → Start: [cyan]{restart_cmd}[/cyan]")
 
 
 # =============================================================================
@@ -953,158 +1020,11 @@ def setup():
             "2. Start the service: [cyan]sudo systemctl start mcp-server[/cyan]\n"
             "3. Test the connection from UAVCrew dashboard\n\n"
             "[bold]Commands:[/bold]\n"
-            "  [cyan]uavcrew check[/cyan]  - Validate configuration\n"
-            "  [cyan]sudo systemctl status mcp-server[/cyan]  - Check service status",
+            "  [cyan]uavcrew status[/cyan]  - Check status and tools\n"
+            "  [cyan]sudo journalctl -u mcp-server -f[/cyan]  - View logs",
             border_style="green",
         )
     )
-
-
-def _run_check(env_path: Optional[Path] = None) -> bool:
-    """Internal check implementation. Returns True if all checks pass."""
-    if env_path is None:
-        env_path = Path.cwd() / ".env"
-
-    all_passed = True
-
-    # Load .env if it exists
-    from dotenv import load_dotenv
-
-    load_dotenv(env_path)
-
-    # Environment checks
-    console.print("\n[bold]Environment:[/bold]")
-
-    if env_path.exists():
-        console.print("  [green]✓[/green] .env file exists")
-    else:
-        console.print("  [red]✗[/red] .env file not found")
-        all_passed = False
-
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
-        console.print("  [green]✓[/green] DATABASE_URL set")
-    else:
-        console.print("  [red]✗[/red] DATABASE_URL not set")
-        all_passed = False
-
-    # Database checks
-    console.print("\n[bold]Database:[/bold]")
-
-    if db_url:
-        # Detect database type from URL
-        if db_url.startswith("sqlite"):
-            db_type = "sqlite"
-        elif db_url.startswith("postgresql"):
-            db_type = "postgresql"
-        elif db_url.startswith("mysql"):
-            db_type = "mysql"
-        elif db_url.startswith("mssql"):
-            db_type = "sqlserver"
-        elif db_url.startswith("oracle"):
-            db_type = "oracle"
-        else:
-            db_type = "unknown"
-
-        if check_driver_installed(db_type):
-            driver = DB_CONFIGS.get(db_type, {}).get("driver", "built-in")
-            console.print(f"  [green]✓[/green] Driver installed ({driver})")
-        else:
-            console.print(f"  [red]✗[/red] Driver not installed for {db_type}")
-            all_passed = False
-
-        success, message = test_database_connection(db_url)
-        if success:
-            console.print("  [green]✓[/green] Connection successful")
-        else:
-            console.print(f"  [red]✗[/red] Connection failed: {message}")
-            all_passed = False
-
-        # Test the MCP tools
-        console.print("\n[bold]Tools:[/bold]")
-
-        if not success:
-            console.print("  [dim]–[/dim] Skipped (database connection failed)")
-        else:
-            try:
-                from .tools.raw_database import list_tables, describe_table, query_table
-
-                # Test list_tables
-                result = list_tables()
-                if "error" in result:
-                    console.print(f"  [red]✗[/red] list_tables: {result['error']}")
-                    all_passed = False
-                    tables = []
-                else:
-                    table_count = result.get("count", 0)
-                    tables = result.get("tables", [])
-                    console.print(f"  [green]✓[/green] list_tables ({table_count} tables)")
-
-                # Test describe_table
-                if tables:
-                    first_table = tables[0]["name"]
-                    desc_result = describe_table(first_table)
-                    if "error" in desc_result:
-                        console.print(f"  [red]✗[/red] describe_table: {desc_result['error']}")
-                        all_passed = False
-                    else:
-                        col_count = len(desc_result.get("columns", []))
-                        console.print(f"  [green]✓[/green] describe_table ({col_count} columns in '{first_table}')")
-                else:
-                    console.print("  [dim]–[/dim] describe_table skipped (no tables)")
-
-                # Test query_table
-                if tables:
-                    first_table = tables[0]["name"]
-                    query_result = query_table(first_table, limit=1)
-                    if "error" in query_result:
-                        console.print(f"  [red]✗[/red] query_table: {query_result['error']}")
-                        all_passed = False
-                    else:
-                        row_count = query_result.get("count", 0)
-                        console.print(f"  [green]✓[/green] query_table ({row_count} row from '{first_table}')")
-                else:
-                    console.print("  [dim]–[/dim] query_table skipped (no tables)")
-
-            except Exception as e:
-                console.print(f"  [red]✗[/red] Tool error: {e}")
-                all_passed = False
-
-    # Security checks
-    console.print("\n[bold]Security:[/bold]")
-
-    api_key = os.environ.get("MCP_API_KEY")
-    if api_key:
-        # Mask the key for display
-        masked = api_key[:8] + "****" if len(api_key) > 8 else "****"
-        console.print(f"  [green]✓[/green] MCP_API_KEY configured ({masked})")
-    else:
-        console.print("  [yellow]![/yellow] MCP_API_KEY not set (server will accept any request)")
-
-    seed_demo = os.environ.get("SEED_DEMO_DATA", "false").lower()
-    if seed_demo == "true":
-        console.print("  [yellow]![/yellow] SEED_DEMO_DATA=true (disable in production)")
-
-    # Summary
-    if all_passed:
-        console.print("\n[bold green]All checks passed![/bold green]")
-    else:
-        console.print("\n[bold red]Some checks failed.[/bold red]")
-
-    return all_passed
-
-
-@app.command()
-def check():
-    """Validate current configuration."""
-    console.print(
-        Panel.fit(
-            "[bold blue]UAVCrew MCP Server - Configuration Check[/bold blue]",
-            border_style="blue",
-        )
-    )
-    success = _run_check()
-    raise typer.Exit(0 if success else 1)
 
 
 def _generate_systemd(env_path: Optional[Path] = None):
