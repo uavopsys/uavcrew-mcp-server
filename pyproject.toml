@@ -1,11 +1,10 @@
 [project]
-name = "uavcrew-mcp-server"
-version = "0.1.0"
-description = "MCP Server for UAV crew compliance data - shared by uavcrew and clients"
+name = "uavcrew-mcp-gateway"
+version = "1.1.0"
+description = "MCP Gateway for UAVCrew AI agent access to customer data"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
     "pydantic>=2.5.0",
     "sqlalchemy>=2.0.0",
     "python-dotenv>=1.0.0",
@@ -14,6 +13,7 @@ dependencies = [
     "httpx>=0.26.0",
     "typer>=0.9.0",
     "rich>=13.0.0",
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +35,7 @@ dev = [
 ]
 
 [project.scripts]
+mcp-gateway = "mcp_server.http_server:main"
 mcp-http-server = "mcp_server.http_server:main"
 uavcrew = "mcp_server.cli:app"
 
