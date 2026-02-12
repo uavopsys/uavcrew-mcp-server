@@ -36,6 +36,8 @@ env/
 .env
 .env.local
 .env.*.local
+manifest.json
+PLAN.md
 
 # Database (demo db can be regenerated)
 *.db
