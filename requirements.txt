@@ -2,18 +2,13 @@
 # Install with: pip install -r requirements.txt
 
 # Core dependencies
-mcp>=1.0.0
+fastmcp>=2.0.0
 pydantic>=2.5.0
-sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 fastapi>=0.109.0
 uvicorn>=0.27.0
 httpx>=0.26.0
 typer>=0.9.0
 rich>=13.0.0
-
-# Database drivers (install the one you need)
-# pip install psycopg2-binary  # PostgreSQL
-# pip install pymysql          # MySQL/MariaDB
-# pip install pyodbc           # SQL Server
-# pip install oracledb         # Oracle
+PyJWT[crypto]>=2.8.0
+gunicorn>=21.2.0

@@ -4,7 +4,7 @@ UAVCrew MCP Gateway CLI
 Interactive setup wizard and configuration tools.
 
 Usage:
-    uavcrew status             # Check status, database, and tools
+    uavcrew status             # Check status, manifest, and service
     uavcrew setup              # Interactive configuration wizard
     uavcrew keys list          # Show configured API keys
     uavcrew keys add <token>   # Add an API key
@@ -31,113 +31,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
-# Database configuration templates
-DB_CONFIGS = {
-    "sqlite": {
-        "driver": None,  # Built-in
-        "pip_package": None,
-        "url_template": "sqlite:///{path}",
-        "default_path": "./compliance.db",
-    },
-    "postgresql": {
-        "driver": "psycopg2",
-        "pip_package": "psycopg2-binary",
-        "url_template": "postgresql://{user}:{password}@{host}:{port}/{database}",
-        "default_port": "5432",
-    },
-    "mysql": {
-        "driver": "pymysql",
-        "pip_package": "pymysql",
-        "url_template": "mysql+pymysql://{user}:{password}@{host}:{port}/{database}",
-        "default_port": "3306",
-    },
-    "sqlserver": {
-        "driver": "pyodbc",
-        "pip_package": "pyodbc",
-        "url_template": "mssql+pyodbc://{user}:{password}@{host}/{database}?driver=ODBC+Driver+17+for+SQL+Server",
-        "default_port": "1433",
-    },
-    "oracle": {
-        "driver": "oracledb",
-        "pip_package": "oracledb",
-        "url_template": "oracle+oracledb://{user}:{password}@{host}:{port}/{database}",
-        "default_port": "1521",
-    },
-}
-
-
-def check_driver_installed(db_type: str) -> bool:
-    """Check if the database driver is installed."""
-    config = DB_CONFIGS[db_type]
-    driver = config.get("driver")
-    if driver is None:
-        return True  # SQLite - no driver needed
-    try:
-        __import__(driver)
-        return True
-    except ImportError:
-        return False
-
-
-def install_driver(db_type: str) -> bool:
-    """Install the database driver via pip."""
-    config = DB_CONFIGS[db_type]
-    package = config.get("pip_package")
-    if package is None:
-        return True  # No package needed
-
-    console.print(f"Installing {package}...", style="yellow")
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", package],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        console.print(f"Installed {package}", style="green")
-        return True
-    except subprocess.CalledProcessError:
-        console.print(f"Failed to install {package}", style="red")
-        return False
-
-
-def build_database_url(db_type: str, existing: dict = None) -> str:
-    """Interactively build a database URL."""
-    config = DB_CONFIGS[db_type]
-    existing = existing or {}
-
-    if db_type == "sqlite":
-        default_path = existing.get("db_path", config["default_path"])
-        path = Prompt.ask("Database file path", default=default_path)
-        return config["url_template"].format(path=path)
-
-    # For all other databases, prompt for connection details
-    host = Prompt.ask("Host", default=existing.get("db_host", "localhost"))
-    port = Prompt.ask("Port", default=existing.get("db_port", config.get("default_port", "")))
-    database = Prompt.ask("Database name", default=existing.get("db_name", ""))
-    user = Prompt.ask("Username", default=existing.get("db_user", ""))
-    password = Prompt.ask("Password", password=True)
-
-    return config["url_template"].format(
-        host=host,
-        port=port,
-        database=database,
-        user=user,
-        password=password,
-    )
-
-
-def test_database_connection(url: str) -> tuple[bool, str]:
-    """Test database connection and return (success, message)."""
-    try:
-        from sqlalchemy import create_engine, text
-
-        engine = create_engine(url)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True, "Connection successful"
-    except Exception as e:
-        return False, str(e)
 
 
 def generate_secret_key() -> str:
@@ -232,9 +125,14 @@ def detect_paths() -> dict:
     }
 
 
+LOG_DIR = "/var/log/ayna/mcp-gateway"
+
+
 def generate_systemd_unit(paths: dict, env_path: Path) -> str:
     """Generate systemd unit file content."""
-    exec_start = f"{paths['python']} -m mcp_server.http_server"
+    venv_bin = f"{paths['venv']}/bin" if paths["venv"] else "/usr/local/bin"
+    gunicorn = f"{venv_bin}/gunicorn"
+    config_path = f"{paths['workdir']}/gunicorn_config.py"
 
     return f"""[Unit]
 Description=UAVCrew MCP Gateway
@@ -242,20 +140,26 @@ Documentation=https://docs.uavcrew.ai/mcp
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
 User={paths['user']}
 Group={paths['user']}
 WorkingDirectory={paths['workdir']}
 EnvironmentFile={env_path.resolve()}
-ExecStart={exec_start}
-Restart=always
+Environment="PATH={venv_bin}"
+ExecStart={gunicorn} \\
+    --config {config_path} \\
+    mcp_server.server:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
 RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={paths['workdir']}
+ReadWritePaths={paths['workdir']} {LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -379,6 +283,7 @@ def _check_process_running(port: int = 8200) -> dict:
     result = {
         "running": False,
         "pid": None,
+        "workers": 0,
         "method": None,
     }
 
@@ -391,21 +296,74 @@ def _check_process_running(port: int = 8200) -> dict:
         )
         if f":{port}" in proc.stdout:
             result["running"] = True
-            # Try to extract PID
             import re
             match = re.search(r'pid=(\d+)', proc.stdout)
             if match:
                 result["pid"] = match.group(1)
             result["method"] = "manual"
+
+            # Count gunicorn workers
+            try:
+                worker_proc = subprocess.run(
+                    ["pgrep", "-c", "-P", result["pid"] or "0"],
+                    capture_output=True,
+                    text=True,
+                )
+                if worker_proc.returncode == 0:
+                    result["workers"] = int(worker_proc.stdout.strip())
+            except Exception:
+                pass
     except Exception:
         pass
 
     return result
 
 
+def _check_manifest() -> dict:
+    """Load and validate manifest, return status info."""
+    result = {
+        "loaded": False,
+        "path": None,
+        "entity_count": 0,
+        "action_count": 0,
+        "entities": [],
+        "errors": [],
+    }
+
+    manifest_path = os.environ.get("MCP_MANIFEST_PATH", "./manifest.json")
+    result["path"] = manifest_path
+
+    if not Path(manifest_path).exists():
+        result["errors"].append(f"Manifest file not found: {manifest_path}")
+        return result
+
+    try:
+        from .manifest import load_manifest, get_entity_names, get_entity_actions
+
+        manifest = load_manifest(manifest_path)
+        result["loaded"] = True
+
+        entity_names = get_entity_names(manifest)
+        result["entity_count"] = len(entity_names)
+        result["entities"] = list(entity_names)
+
+        # Count total actions across all entities
+        total_actions = 0
+        for name in entity_names:
+            actions = get_entity_actions(manifest, name)
+            if actions:
+                total_actions += len(actions)
+        result["action_count"] = total_actions
+
+    except Exception as e:
+        result["errors"].append(str(e))
+
+    return result
+
+
 @app.command()
 def status():
-    """Check MCP gateway status, configuration, and tools."""
+    """Check MCP gateway status, configuration, and manifest."""
     from . import __version__
     console.print(
         Panel.fit(
@@ -423,106 +381,78 @@ def status():
     console.print("\n[bold]Configuration:[/bold]")
 
     port = 8200
-    db_url = None
 
     if env_path.exists():
-        console.print("  [green]✓[/green] .env file exists")
+        console.print("  [green]\u2713[/green] .env file exists")
         env_vars = load_env_file(env_path)
 
-        # Load env vars for tool tests
+        # Load env vars so manifest loader can find MCP_MANIFEST_PATH
         from dotenv import load_dotenv
         load_dotenv(env_path)
-
-        db_url = env_vars.get("DATABASE_URL")
-        if db_url:
-            console.print("  [green]✓[/green] DATABASE_URL configured")
-        else:
-            console.print("  [red]✗[/red] DATABASE_URL not set")
-            all_ok = False
 
         # Check API keys
         api_key = env_vars.get("MCP_API_KEY", "")
         api_keys = env_vars.get("MCP_API_KEYS", "")
         if api_key or api_keys:
             key_count = len([k for k in (api_key + "," + api_keys).split(",") if k.strip()])
-            console.print(f"  [green]✓[/green] API key(s) configured ({key_count} key(s))")
+            console.print(f"  [green]\u2713[/green] API key(s) configured ({key_count} key(s))")
         else:
             console.print("  [yellow]![/yellow] No API keys configured (server will be open)")
+
+        # Check client API token
+        client_token = env_vars.get("CLIENT_API_TOKEN", "")
+        if client_token:
+            console.print("  [green]\u2713[/green] CLIENT_API_TOKEN configured")
+        else:
+            console.print("  [yellow]![/yellow] CLIENT_API_TOKEN not set (API calls will fail)")
 
         port = int(env_vars.get("MCP_PORT", "8200"))
         public_url = env_vars.get("MCP_PUBLIC_URL", "")
         if public_url:
             console.print(f"  [dim]Public URL: {public_url}[/dim]")
     else:
-        console.print("  [red]✗[/red] .env file not found")
+        console.print("  [red]\u2717[/red] .env file not found")
         console.print("  [dim]Run 'uavcrew setup' to configure[/dim]")
         all_ok = False
 
     # ==========================================================================
-    # Database & Tools
+    # Manifest
     # ==========================================================================
-    console.print("\n[bold]Database:[/bold]")
+    console.print("\n[bold]Manifest:[/bold]")
 
-    db_connected = False
-    if not db_url:
-        console.print("  [dim]–[/dim] Skipped (no DATABASE_URL)")
-    else:
-        success, message = test_database_connection(db_url)
-        if success:
-            console.print("  [green]✓[/green] Connection successful")
-            db_connected = True
-        else:
-            console.print(f"  [red]✗[/red] Connection failed: {message}")
-            all_ok = False
+    manifest_info = _check_manifest()
 
-    console.print("\n[bold]Tools:[/bold]")
+    if manifest_info["errors"]:
+        for err in manifest_info["errors"]:
+            console.print(f"  [red]\u2717[/red] {err}")
+        all_ok = False
+    elif manifest_info["loaded"]:
+        console.print(f"  [green]\u2713[/green] Loaded from {manifest_info['path']}")
+        console.print(f"  [green]\u2713[/green] Entities: {manifest_info['entity_count']}")
+        console.print(f"  [green]\u2713[/green] Actions: {manifest_info['action_count']}")
 
-    if not db_connected:
-        console.print("  [dim]–[/dim] Skipped (no database connection)")
-    else:
+        # Show entity table
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Entity", style="cyan")
+        table.add_column("Actions", style="dim")
+
+        from .manifest import load_manifest, get_entity, get_entity_actions
         try:
-            from .tools.raw_database import list_tables, describe_table, query_table
+            manifest = load_manifest(manifest_info["path"])
+            for name in manifest_info["entities"]:
+                entity_def = get_entity(manifest, name)
+                actions = get_entity_actions(manifest, name)
+                action_names = ", ".join(actions.keys()) if actions else "read-only"
+                table.add_row(name, action_names)
+            console.print(table)
+        except Exception:
+            pass
 
-            # Test list_tables
-            result = list_tables()
-            if "error" in result:
-                console.print(f"  [red]✗[/red] list_tables: {result['error']}")
-                all_ok = False
-                tables = []
-            else:
-                table_count = result.get("count", 0)
-                tables = result.get("tables", [])
-                console.print(f"  [green]✓[/green] list_tables ({table_count} tables)")
-
-            # Test describe_table
-            if tables:
-                first_table = tables[0]["name"]
-                desc_result = describe_table(first_table)
-                if "error" in desc_result:
-                    console.print(f"  [red]✗[/red] describe_table: {desc_result['error']}")
-                    all_ok = False
-                else:
-                    col_count = len(desc_result.get("columns", []))
-                    console.print(f"  [green]✓[/green] describe_table ({col_count} columns in '{first_table}')")
-            else:
-                console.print("  [dim]–[/dim] describe_table skipped (no tables)")
-
-            # Test query_table
-            if tables:
-                first_table = tables[0]["name"]
-                query_result = query_table(first_table, limit=1)
-                if "error" in query_result:
-                    console.print(f"  [red]✗[/red] query_table: {query_result['error']}")
-                    all_ok = False
-                else:
-                    row_count = query_result.get("count", 0)
-                    console.print(f"  [green]✓[/green] query_table ({row_count} row from '{first_table}')")
-            else:
-                console.print("  [dim]–[/dim] query_table skipped (no tables)")
-
-        except Exception as e:
-            console.print(f"  [red]✗[/red] Tool error: {e}")
-            all_ok = False
+    # ==========================================================================
+    # Tools
+    # ==========================================================================
+    console.print("\n[bold]Tools:[/bold]")
+    console.print("  get_entity, list_entities, search, action")
 
     # ==========================================================================
     # Service Status
@@ -536,30 +466,34 @@ def status():
     restart_cmd = None
 
     if systemd["installed"]:
-        console.print("  [green]✓[/green] Systemd service installed")
+        console.print("  [green]\u2713[/green] Systemd service installed")
 
         if systemd["enabled"]:
-            console.print("  [green]✓[/green] Service enabled (starts on boot)")
+            console.print("  [green]\u2713[/green] Service enabled (starts on boot)")
         else:
             console.print("  [yellow]![/yellow] Service not enabled")
 
         if systemd["running"]:
-            console.print("  [green]✓[/green] Service running")
+            console.print("  [green]\u2713[/green] Service running (gunicorn)")
             running = True
             restart_cmd = f"sudo systemctl restart {SERVICE_NAME}"
+            if process["workers"]:
+                console.print(f"  [green]\u2713[/green] Workers: {process['workers']}")
         else:
-            console.print(f"  [red]✗[/red] Service not running ({systemd['status']})")
+            console.print(f"  [red]\u2717[/red] Service not running ({systemd['status']})")
             restart_cmd = f"sudo systemctl start {SERVICE_NAME}"
             all_ok = False
     else:
-        console.print("  [dim]–[/dim] Systemd service not installed")
+        console.print("  [dim]\u2013[/dim] Systemd service not installed")
 
         if process["running"]:
-            console.print(f"  [green]✓[/green] Server running (manual, PID: {process['pid'] or 'unknown'})")
+            pid_info = f"PID: {process['pid'] or 'unknown'}"
+            worker_info = f", {process['workers']} workers" if process["workers"] else ""
+            console.print(f"  [green]\u2713[/green] Server running (manual, {pid_info}{worker_info})")
             running = True
             restart_cmd = f"# Kill PID {process['pid']} and restart manually"
         else:
-            console.print("  [red]✗[/red] Server not running")
+            console.print("  [red]\u2717[/red] Server not running")
             all_ok = False
 
     # ==========================================================================
@@ -571,11 +505,11 @@ def status():
         console.print("\n[bold red]Some checks failed.[/bold red]")
 
     if not env_path.exists():
-        console.print(f"  → Run [cyan]uavcrew setup[/cyan] to configure")
+        console.print(f"  \u2192 Run [cyan]uavcrew setup[/cyan] to configure")
     elif not systemd["installed"] and not running:
-        console.print(f"  → Run [cyan]uavcrew generate-systemd[/cyan] to create service")
+        console.print(f"  \u2192 Run [cyan]uavcrew generate-systemd[/cyan] to create service")
     elif not running and restart_cmd:
-        console.print(f"  → Start: [cyan]{restart_cmd}[/cyan]")
+        console.print(f"  \u2192 Start: [cyan]{restart_cmd}[/cyan]")
 
 
 # =============================================================================
@@ -711,7 +645,7 @@ def keys_add(token: str = typer.Argument(..., help="API token from UAVCrew dashb
     keys.append(token)
     _save_keys(env_path, keys)
 
-    console.print(f"[green]✓[/green] Added key: {_mask_key(token)}")
+    console.print(f"[green]\u2713[/green] Added key: {_mask_key(token)}")
     console.print(f"[dim]Total keys: {len(keys)}[/dim]")
     console.print("\n[yellow]Restart the server to apply:[/yellow]")
     console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
@@ -753,7 +687,7 @@ def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to rem
     keys.remove(key_to_remove)
     _save_keys(env_path, keys)
 
-    console.print(f"[green]✓[/green] Removed key: {_mask_key(key_to_remove)}")
+    console.print(f"[green]\u2713[/green] Removed key: {_mask_key(key_to_remove)}")
     console.print(f"[dim]Remaining keys: {len(keys)}[/dim]")
 
     if keys:
@@ -763,6 +697,75 @@ def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to rem
         console.print("\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]")
 
 
+# =============================================================================
+# Tenant Management
+# =============================================================================
+
+tenants_app = typer.Typer(help="Manage tenant credentials (K4) used by the gateway to call client APIs.")
+app.add_typer(tenants_app, name="tenants")
+
+
+@tenants_app.command("list")
+def tenants_list():
+    """List registered tenants."""
+    from .tenant_db import list_tenants
+
+    tenants = list_tenants()
+
+    if not tenants:
+        console.print("[yellow]No tenants registered.[/yellow]")
+        console.print("Add one with: [cyan]uavcrew tenants add --tenant-id <id> --token <k4>[/cyan]")
+        return
+
+    console.print(f"\n[bold]Registered Tenants ({len(tenants)}):[/bold]\n")
+
+    table = Table()
+    table.add_column("Tenant ID", style="cyan")
+    table.add_column("Name", style="white")
+    table.add_column("Created", style="dim")
+
+    for t in tenants:
+        table.add_row(t["tenant_id"], t["name"], t["created_at"])
+
+    console.print(table)
+
+
+@tenants_app.command("add")
+def tenants_add(
+    tenant_id: str = typer.Option(..., "--tenant-id", help="Tenant identifier (matches UAVCrew tenant external_id)"),
+    token: str = typer.Option(..., "--token", help="K4 API token for this tenant's client API"),
+    name: str = typer.Option("", "--name", help="Friendly name for this tenant"),
+):
+    """Register a client API credential (K4) for a tenant."""
+    from .tenant_db import add_tenant, get_tenant_token
+
+    existing = get_tenant_token(tenant_id)
+    if existing:
+        console.print(f"[yellow]Tenant '{tenant_id}' already exists — updating token.[/yellow]")
+
+    add_tenant(tenant_id, token, name)
+    console.print(f"[green]\u2713[/green] Registered tenant: {tenant_id}" + (f" ({name})" if name else ""))
+    console.print(f"\n[yellow]Restart the server to apply:[/yellow]")
+    console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+
+
+@tenants_app.command("remove")
+def tenants_remove(
+    tenant_id: str = typer.Option(..., "--tenant-id", help="Tenant identifier to remove"),
+):
+    """Remove a tenant and its credential."""
+    from .tenant_db import remove_tenant
+
+    removed = remove_tenant(tenant_id)
+    if removed:
+        console.print(f"[green]\u2713[/green] Removed tenant: {tenant_id}")
+        console.print(f"\n[yellow]Restart the server to apply:[/yellow]")
+        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+    else:
+        console.print(f"[red]Tenant '{tenant_id}' not found.[/red]")
+        console.print("Use [cyan]uavcrew tenants list[/cyan] to see registered tenants.")
+
+
 @app.command()
 def setup():
     """Interactive setup wizard for UAVCrew MCP Gateway."""
@@ -770,8 +773,7 @@ def setup():
         Panel.fit(
             "[bold blue]UAVCrew MCP Gateway Setup[/bold blue]\n\n"
             "This wizard will configure your MCP gateway to connect with UAVCrew.ai.\n"
-            "Your flight data stays on your infrastructure - UAVCrew fetches only what\n"
-            "it needs for compliance analysis.",
+            "The gateway translates entity operations into client API calls.",
             border_style="blue",
         )
     )
@@ -833,56 +835,56 @@ def setup():
     )
 
     # =========================================================================
-    # STEP 2: Database Configuration
+    # STEP 2: Client API Configuration
     # =========================================================================
     console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 2: Database Configuration[/bold cyan]")
+    console.print("[bold cyan]STEP 2: Client API Configuration[/bold cyan]")
     console.print("=" * 60)
     console.print(
-        "\nThe MCP gateway needs access to your flight data database.\n"
-        "This can be your existing database or a dedicated one."
+        "\nThe MCP gateway forwards requests to your client API.\n"
+        "The manifest file defines which entities and actions are available."
     )
 
-    # Database type selection
-    db_choices = list(DB_CONFIGS.keys())
-    console.print("\n[bold]Available databases:[/bold]")
-    for i, db in enumerate(db_choices, 1):
-        note = "[green](built-in, good for testing)[/green]" if db == "sqlite" else ""
-        console.print(f"  {i}. {db.title()} {note}")
-
-    db_choice = Prompt.ask(
-        "\n  Select database type",
-        choices=[str(i) for i in range(1, len(db_choices) + 1)],
-        default="1",
+    # Manifest path
+    console.print("\n[bold]Manifest File[/bold]")
+    console.print("  Path to manifest.json that defines entities and API paths.")
+    console.print("  See manifest.json.example for the reference format.")
+    config["MCP_MANIFEST_PATH"] = Prompt.ask(
+        "\n  Manifest path",
+        default=existing.get("MCP_MANIFEST_PATH", "./manifest.json"),
     )
-    db_type = db_choices[int(db_choice) - 1]
 
-    # Install driver if needed
-    if not check_driver_installed(db_type):
-        if Confirm.ask(f"  Install {db_type} driver?", default=True):
-            if not install_driver(db_type):
-                console.print("  Cannot proceed without database driver.", style="red")
+    # Validate manifest if it exists
+    manifest_path = Path(config["MCP_MANIFEST_PATH"])
+    if manifest_path.exists():
+        try:
+            from .manifest import load_manifest, get_entity_names
+            manifest = load_manifest(str(manifest_path))
+            entity_names = get_entity_names(manifest)
+            console.print(f"  [green]\u2713[/green] Manifest valid ({len(entity_names)} entities: {', '.join(entity_names)})")
+        except Exception as e:
+            console.print(f"  [red]\u2717[/red] Manifest error: {e}")
+            if not Confirm.ask("  Continue anyway?", default=False):
                 raise typer.Exit(1)
-        else:
-            console.print("  Cannot proceed without database driver.", style="red")
-            raise typer.Exit(1)
-
-    # Build database URL
-    console.print(f"\n[bold]{db_type.title()} Connection Details:[/bold]")
-    database_url = build_database_url(db_type, existing)
-
-    # Test connection
-    console.print("\n  Testing connection... ", end="")
-    success, message = test_database_connection(database_url)
-    if success:
-        console.print("[green]OK[/green]")
     else:
-        console.print("[red]FAILED[/red]")
-        console.print(f"  Error: {message}", style="red")
-        if not Confirm.ask("  Continue anyway?", default=False):
-            raise typer.Exit(1)
+        console.print(f"  [yellow]![/yellow] Manifest not found at {config['MCP_MANIFEST_PATH']}")
+        console.print("  [dim]Copy manifest.json.example and customize it before starting the server.[/dim]")
 
-    config["DATABASE_URL"] = database_url
+    # Client API token
+    console.print("\n[bold]Client API Token[/bold]")
+    console.print("  Bearer token for authenticating with the client API.")
+    console.print("  The gateway sends this token with every request to the client API.")
+    token = Prompt.ask(
+        "\n  Client API token",
+        default=existing.get("CLIENT_API_TOKEN", ""),
+        password=True,
+    )
+    config["CLIENT_API_TOKEN"] = token
+
+    if token:
+        console.print("  [green]\u2713[/green] Token saved")
+    else:
+        console.print("  [yellow]![/yellow] No token provided - API calls will fail until configured")
 
     # =========================================================================
     # STEP 3: UAVCrew Connection Token
@@ -901,42 +903,32 @@ def setup():
     console.print("  5. Copy the connection token shown")
     console.print("\n[dim]The token starts with 'mcp_' and is shown only once.[/dim]")
 
-    token = Prompt.ask(
+    mcp_key = Prompt.ask(
         "\n  Connection token",
         default=existing.get("MCP_API_KEY", ""),
         password=True,
     )
-    config["MCP_API_KEY"] = token
+    config["MCP_API_KEY"] = mcp_key
 
-    if token:
-        console.print("  [green]✓[/green] Token saved")
+    if mcp_key:
+        console.print("  [green]\u2713[/green] Token saved")
     else:
         console.print("  [yellow]![/yellow] No token provided - configure later in .env")
 
     # =========================================================================
-    # STEP 4: Security & Options
+    # STEP 4: Security
     # =========================================================================
     console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 4: Security & Options[/bold cyan]")
+    console.print("[bold cyan]STEP 4: Security[/bold cyan]")
     console.print("=" * 60)
 
     # Secret key
     if not existing.get("SECRET_KEY"):
         config["SECRET_KEY"] = generate_secret_key()
-        console.print("\n  [green]✓[/green] Generated SECRET_KEY")
+        console.print("\n  [green]\u2713[/green] Generated SECRET_KEY")
     else:
         config["SECRET_KEY"] = existing["SECRET_KEY"]
-        console.print("\n  [green]✓[/green] Using existing SECRET_KEY")
-
-    # Demo data
-    console.print("\n[bold]Demo Data[/bold]")
-    console.print("  Seed sample flights, pilots, and aircraft for testing.")
-    console.print("  [yellow]Disable this in production.[/yellow]")
-    seed_demo = Confirm.ask(
-        "  Seed demo data on startup?",
-        default=existing.get("SEED_DEMO_DATA", "false").lower() == "true",
-    )
-    config["SEED_DEMO_DATA"] = str(seed_demo).lower()
+        console.print("\n  [green]\u2713[/green] Using existing SECRET_KEY")
 
     # =========================================================================
     # STEP 5: Write Configuration
@@ -946,7 +938,7 @@ def setup():
     console.print("=" * 60)
 
     write_env_file(env_path, config)
-    console.print(f"\n  [green]✓[/green] Configuration saved to {env_path}")
+    console.print(f"\n  [green]\u2713[/green] Configuration saved to {env_path}")
 
     # =========================================================================
     # STEP 6: Reverse Proxy Setup
@@ -987,7 +979,7 @@ def setup():
         if Confirm.ask("\n  Save Caddy config to ./caddy-mcp.conf?", default=True):
             with open("caddy-mcp.conf", "w") as f:
                 f.write(caddy_config)
-            console.print("  [green]✓[/green] Saved to ./caddy-mcp.conf")
+            console.print("  [green]\u2713[/green] Saved to ./caddy-mcp.conf")
 
     elif proxy_choice == "2":
         # Nginx
@@ -1003,7 +995,7 @@ def setup():
         if Confirm.ask("\n  Save Nginx config to ./nginx-mcp.conf?", default=True):
             with open("nginx-mcp.conf", "w") as f:
                 f.write(nginx_config)
-            console.print("  [green]✓[/green] Saved to ./nginx-mcp.conf")
+            console.print("  [green]\u2713[/green] Saved to ./nginx-mcp.conf")
 
     elif proxy_choice == "3":
         # Apache
@@ -1020,7 +1012,7 @@ def setup():
         if Confirm.ask("\n  Save Apache config to ./apache-mcp.conf?", default=True):
             with open("apache-mcp.conf", "w") as f:
                 f.write(apache_config)
-            console.print("  [green]✓[/green] Saved to ./apache-mcp.conf")
+            console.print("  [green]\u2713[/green] Saved to ./apache-mcp.conf")
 
     else:
         console.print("\n  Skipping reverse proxy configuration.")
@@ -1050,11 +1042,12 @@ def setup():
             f"Public URL:  {config['MCP_PUBLIC_URL']}\n"
             f"Local:       {config['MCP_HOST']}:{config['MCP_PORT']}\n\n"
             "[bold]Next Steps:[/bold]\n"
-            "1. Configure your reverse proxy (see above)\n"
-            "2. Start the service: [cyan]sudo systemctl start mcp-server[/cyan]\n"
-            "3. Test the connection from UAVCrew dashboard\n\n"
+            "1. Copy manifest.json.example to manifest.json and customize\n"
+            "2. Configure your reverse proxy (see above)\n"
+            "3. Start the service: [cyan]sudo systemctl start mcp-server[/cyan]\n"
+            "4. Test the connection from UAVCrew dashboard\n\n"
             "[bold]Commands:[/bold]\n"
-            "  [cyan]uavcrew status[/cyan]  - Check status and tools\n"
+            "  [cyan]uavcrew status[/cyan]  - Check status and manifest\n"
             "  [cyan]sudo journalctl -u mcp-server -f[/cyan]  - View logs",
             border_style="green",
         )
@@ -1067,17 +1060,39 @@ def _generate_systemd(env_path: Optional[Path] = None):
         env_path = Path.cwd() / ".env"
 
     paths = detect_paths()
+    venv_bin = f"{paths['venv']}/bin" if paths["venv"] else "/usr/local/bin"
 
     # Show detected paths
     table = Table(title="Detected Configuration")
     table.add_column("Setting", style="cyan")
     table.add_column("Value", style="white")
     table.add_row("Working directory", str(paths["workdir"]))
-    table.add_row("Python", str(paths["python"]))
+    table.add_row("Gunicorn", f"{venv_bin}/gunicorn")
     table.add_row("User", paths["user"])
     if paths["venv"]:
         table.add_row("Virtual environment", str(paths["venv"]))
+    table.add_row("Log directory", LOG_DIR)
     console.print(table)
+
+    # Create log directory
+    log_dir = Path(LOG_DIR)
+    if not log_dir.exists():
+        console.print(f"\n  Creating log directory: {LOG_DIR}")
+        try:
+            subprocess.run(
+                ["sudo", "mkdir", "-p", LOG_DIR],
+                check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["sudo", "chown", f"{paths['user']}:{paths['user']}", LOG_DIR],
+                check=True, capture_output=True,
+            )
+            console.print(f"  [green]\u2713[/green] Log directory created")
+        except subprocess.CalledProcessError:
+            console.print(f"  [yellow]![/yellow] Could not create log directory")
+            console.print(f"  Run manually: [cyan]sudo mkdir -p {LOG_DIR} && sudo chown {paths['user']}:{paths['user']} {LOG_DIR}[/cyan]")
+    else:
+        console.print(f"\n  [green]\u2713[/green] Log directory exists: {LOG_DIR}")
 
     # Generate unit file
     unit_content = generate_systemd_unit(paths, env_path)
@@ -1108,16 +1123,16 @@ def _generate_systemd(env_path: Optional[Path] = None):
                 capture_output=True,
             )
             if proc.returncode != 0:
-                console.print("  [red]✗[/red] Failed to write systemd unit file", style="red")
+                console.print("  [red]\u2717[/red] Failed to write systemd unit file", style="red")
                 console.print("  Try option 2 to save locally, then install manually.")
                 return
 
-        console.print(f"  [green]✓[/green] Installed to {output_path}")
+        console.print(f"  [green]\u2713[/green] Installed to {output_path}")
 
         # Reload systemd
         try:
             subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True, capture_output=True)
-            console.print("  [green]✓[/green] Reloaded systemd")
+            console.print("  [green]\u2713[/green] Reloaded systemd")
         except subprocess.CalledProcessError:
             console.print("  [yellow]![/yellow] Could not reload systemd")
 
@@ -1128,7 +1143,7 @@ def _generate_systemd(env_path: Optional[Path] = None):
                     check=True,
                     capture_output=True,
                 )
-                console.print("  [green]✓[/green] Service enabled")
+                console.print("  [green]\u2713[/green] Service enabled")
             except subprocess.CalledProcessError:
                 console.print("  [yellow]![/yellow] Could not enable service")
 
@@ -1139,7 +1154,7 @@ def _generate_systemd(env_path: Optional[Path] = None):
                     check=True,
                     capture_output=True,
                 )
-                console.print(f"  [green]✓[/green] Service restarted")
+                console.print(f"  [green]\u2713[/green] Service restarted")
             except subprocess.CalledProcessError:
                 console.print(f"  [yellow]![/yellow] Could not restart service")
                 console.print(f"  Run manually: [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
@@ -1148,7 +1163,7 @@ def _generate_systemd(env_path: Optional[Path] = None):
         output_path = Path.cwd() / "mcp-server.service"
         with open(output_path, "w") as f:
             f.write(unit_content)
-        console.print(f"\n  [green]✓[/green] Saved to {output_path}")
+        console.print(f"\n  [green]\u2713[/green] Saved to {output_path}")
         console.print("\n  [bold]To install manually:[/bold]")
         console.print(f"    sudo cp {output_path} /etc/systemd/system/")
         console.print("    sudo systemctl daemon-reload")

@@ -1,0 +1,205 @@
+{
+  "api_base_url": "https://api.client.com/api/v1",
+  "entities": {
+    "pilot": {
+      "path": "/pilots",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/pilots"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/pilots/{id}"
+        }
+      }
+    },
+    "aircraft": {
+      "path": "/drones",
+      "id_field": "mavlink_id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/drones"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/drones/{id}"
+        }
+      }
+    },
+    "flight": {
+      "path": "/flights",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "start": {
+          "method": "POST",
+          "path": "/flights/start"
+        },
+        "end": {
+          "method": "POST",
+          "path": "/flights/{id}/end"
+        },
+        "cancel": {
+          "method": "POST",
+          "path": "/flights/{id}/cancel"
+        }
+      }
+    },
+    "mission": {
+      "path": "/missions",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/missions"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/missions/{id}"
+        },
+        "start": {
+          "method": "POST",
+          "path": "/missions/{id}/start"
+        },
+        "complete": {
+          "method": "POST",
+          "path": "/missions/{id}/complete"
+        }
+      }
+    },
+    "maintenance": {
+      "path": "/maintenance",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/maintenance"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/maintenance/{id}"
+        },
+        "start": {
+          "method": "POST",
+          "path": "/maintenance/{id}/start"
+        },
+        "complete": {
+          "method": "POST",
+          "path": "/maintenance/{id}/complete"
+        }
+      }
+    },
+    "checklist": {
+      "path": "/checklists/templates",
+      "id_field": "id",
+      "read": true,
+      "search": true
+    },
+    "company": {
+      "path": "/organization",
+      "id_field": null,
+      "read": true,
+      "search": false
+    },
+    "service": {
+      "path": "/services",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/services"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/services/{id}"
+        }
+      }
+    },
+    "product": {
+      "path": "/products",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/products"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/products/{id}"
+        }
+      }
+    },
+    "artifact": {
+      "path": "/storage/files",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "upload": {
+          "method": "POST",
+          "path": "/storage/upload-url"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/storage/files/{id}"
+        },
+        "move": {
+          "method": "POST",
+          "path": "/storage/files/{id}/move"
+        },
+        "get_download_url": {
+          "method": "POST",
+          "path": "/storage/files/{id}/download-url"
+        }
+      }
+    },
+    "crew": {
+      "path": "/crew",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/crew"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/crew/{id}"
+        }
+      }
+    },
+    "parts": {
+      "path": "/parts",
+      "id_field": "id",
+      "read": true,
+      "search": true,
+      "actions": {
+        "create": {
+          "method": "POST",
+          "path": "/parts"
+        },
+        "update": {
+          "method": "PATCH",
+          "path": "/parts/{id}"
+        }
+      }
+    }
+  }
+}
