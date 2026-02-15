@@ -38,6 +38,7 @@ env/
 .env.*.local
 manifest.json
 PLAN.md
+keys/
 caddy-mcp.conf
 nginx-mcp.conf
 apache-mcp.conf
