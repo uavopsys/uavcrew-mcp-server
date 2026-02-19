@@ -38,7 +38,7 @@ from . import __version__
 from .api_client import ApiClient
 from .auth import DelegationClaims, load_public_key, validate_delegation_token
 from .manifest import load_manifest, get_entity, get_entity_names, get_entity_actions
-from .tenant_db import add_tenant, get_tenant_token, list_tenants, remove_tenant
+from .token_resolver import TokenResolver
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 _manifest = load_manifest()
 _api_base_url = os.environ.get("CLIENT_API_BASE_URL", "").strip() or _manifest["api_base_url"]
 _api_client = ApiClient(_api_base_url)
+_resolver = TokenResolver(_manifest.get("auth", {}), _api_base_url)
 
 # ---------------------------------------------------------------------------
 # FastMCP instance
@@ -66,6 +67,9 @@ _current_claims: ContextVar[DelegationClaims | None] = ContextVar(
 _current_token: ContextVar[str | None] = ContextVar(
     "token", default=None
 )  # K4
+_current_t1_jwt: ContextVar[str | None] = ContextVar(
+    "t1_jwt", default=None
+)  # Raw T1 JWT for dynamic resolver
 
 # Load K3 at startup (if configured)
 _public_key = load_public_key(os.environ.get("MCP_JWT_PUBLIC_KEY_PATH", ""))
@@ -74,8 +78,7 @@ _public_key = load_public_key(os.environ.get("MCP_JWT_PUBLIC_KEY_PATH", ""))
 def _resolve_token() -> str | None:
     """Get the resolved K4 token for the current request.
 
-    In T1 mode: K4 was looked up from tenant_id during auth middleware.
-    In legacy mode: CLIENT_API_TOKEN from env var.
+    Set by AuthMiddleware after resolving via TokenResolver.
     """
     return _current_token.get(None)
 
@@ -401,10 +404,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # No auth configured at all — development mode
         if not _public_key and not _legacy_api_keys:
-            # Fall back to CLIENT_API_TOKEN for tools
-            legacy_token = os.environ.get("CLIENT_API_TOKEN", "").strip()
-            _current_token.set(legacy_token or None)
+            k4 = await _resolver.resolve()
+            _current_token.set(k4)
             _current_claims.set(None)
+            _current_t1_jwt.set(None)
             try:
                 return await call_next(request)
             finally:
@@ -420,8 +423,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if _public_key and token.count(".") == 2:
             claims = validate_delegation_token(token, _public_key)
             if claims:
-                # Look up K4 for this tenant
-                k4 = get_tenant_token(claims.tenant_id)
+                # Resolve K4 for this tenant (static or dynamic)
+                k4 = await _resolver.resolve(claims.tenant_id, token)
                 if not k4:
                     logger.warning(
                         "No K4 for tenant %s (agent=%s, jti=%s)",
@@ -438,11 +441,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     )
                 _current_claims.set(claims)
                 _current_token.set(k4)
+                _current_t1_jwt.set(token)
                 try:
                     return await call_next(request)
                 finally:
                     _current_claims.set(None)
                     _current_token.set(None)
+                    _current_t1_jwt.set(None)
             else:
                 return JSONResponse(
                     status_code=401,
@@ -451,9 +456,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Legacy: static API key check
         if _legacy_api_keys and token in _legacy_api_keys:
-            legacy_token = os.environ.get("CLIENT_API_TOKEN", "").strip()
-            _current_token.set(legacy_token or None)
+            k4 = await _resolver.resolve()
+            _current_token.set(k4)
             _current_claims.set(None)
+            _current_t1_jwt.set(None)
             try:
                 return await call_next(request)
             finally:
@@ -486,65 +492,15 @@ async def health():
     """Health check endpoint."""
     entity_count = len(get_entity_names(_manifest))
     auth_mode = "jwt" if _public_key else ("api_key" if _legacy_api_keys else "none")
-    tenant_count = len(list_tenants())
+    token_mode = _manifest.get("auth", {}).get("mode", "static")
     return {
         "status": "healthy",
         "service": "mcp-gateway",
         "version": __version__,
         "entities": entity_count,
-        "tenants": tenant_count,
         "auth_mode": auth_mode,
+        "token_resolution": token_mode,
     }
-
-
-# ---------------------------------------------------------------------------
-# Tenant management API (for testing + Phase 7 programmatic onboarding)
-# ---------------------------------------------------------------------------
-
-
-@app.get("/tenants")
-async def api_list_tenants():
-    """List registered tenants (tokens are not exposed)."""
-    tenants = list_tenants()
-    return {"tenants": tenants, "total": len(tenants)}
-
-
-@app.post("/tenants", status_code=201)
-async def api_add_tenant(request: Request):
-    """Register a tenant with their K4 API token.
-
-    Body: {"tenant_id": "...", "api_token": "...", "name": "..."}
-    """
-    body = await request.json()
-    tenant_id = body.get("tenant_id")
-    api_token = body.get("api_token")
-    name = body.get("name", "")
-
-    if not tenant_id or not api_token:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "tenant_id and api_token are required"},
-        )
-
-    existing = get_tenant_token(tenant_id)
-    add_tenant(tenant_id, api_token, name)
-
-    action = "updated" if existing else "registered"
-    logger.info("Tenant %s %s: %s", action, tenant_id, name or "(no name)")
-    return {"tenant_id": tenant_id, "name": name, "action": action}
-
-
-@app.delete("/tenants/{tenant_id}")
-async def api_remove_tenant(tenant_id: str):
-    """Remove a tenant and their K4 token."""
-    removed = remove_tenant(tenant_id)
-    if not removed:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Tenant '{tenant_id}' not found"},
-        )
-    logger.info("Tenant removed: %s", tenant_id)
-    return {"tenant_id": tenant_id, "action": "removed"}
 
 
 app.mount("/", mcp_app)
@@ -560,10 +516,12 @@ def _print_banner(host: str, port: int):
     auth_mode = "JWT (K3)" if _public_key else (
         "API key (legacy)" if _legacy_api_keys else "none (dev mode)"
     )
+    token_mode = _manifest.get("auth", {}).get("mode", "static")
     print(f"\nStarting UAVCrew MCP Gateway v{__version__} on {host}:{port}")
     print(f"  MCP endpoint:  POST http://{host}:{port}/mcp")
     print(f"  Health check:  GET  http://{host}:{port}/health")
     print(f"  Auth mode:     {auth_mode}")
+    print(f"  Token resolve: {token_mode}")
     print(f"  Entities ({len(entity_names)}): {', '.join(entity_names)}")
     print(f"  Tools (4): get_entity, list_entities, search, action\n")
 

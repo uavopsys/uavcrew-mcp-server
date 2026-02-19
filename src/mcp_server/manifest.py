@@ -80,6 +80,9 @@ def _validate(manifest: dict, path: str) -> None:
     for name, entity in entities.items():
         _validate_entity(name, entity)
 
+    # auth (optional — defaults to static mode)
+    _validate_auth(manifest)
+
 
 def _validate_entity(name: str, entity: dict) -> None:
     """Validate a single entity definition."""
@@ -134,6 +137,44 @@ def _validate_action(entity_name: str, action_name: str, action: dict) -> None:
         raise ValueError(
             f"Entity '{entity_name}' action '{action_name}': path must be a non-empty string"
         )
+
+
+_VALID_AUTH_MODES = {"static", "dynamic"}
+
+
+def _validate_auth(manifest: dict) -> None:
+    """Validate the auth section of the manifest.
+
+    If no auth key is present, injects a default static config for backward compat.
+    """
+    if "auth" not in manifest:
+        # Default: static mode with CLIENT_API_TOKEN
+        manifest["auth"] = {"mode": "static", "token_env": "CLIENT_API_TOKEN"}
+        return
+
+    auth = manifest["auth"]
+    if not isinstance(auth, dict):
+        raise ValueError("auth must be an object")
+
+    mode = auth.get("mode")
+    if mode not in _VALID_AUTH_MODES:
+        raise ValueError(
+            f"auth.mode must be one of {_VALID_AUTH_MODES}, got '{mode}'"
+        )
+
+    if mode == "static":
+        token_env = auth.get("token_env")
+        if not token_env or not isinstance(token_env, str):
+            raise ValueError("auth.token_env must be a non-empty string for static mode")
+
+    elif mode == "dynamic":
+        resolver_path = auth.get("resolver_path")
+        if not resolver_path or not isinstance(resolver_path, str):
+            raise ValueError(
+                "auth.resolver_path must be a non-empty string for dynamic mode"
+            )
+        if not resolver_path.startswith("/"):
+            raise ValueError("auth.resolver_path must start with /")
 
 
 def get_entity_names(manifest: dict) -> list[str]:

@@ -1,7 +1,6 @@
-"""Tests for MCP Gateway JWT validation and tenant database.
+"""Tests for MCP Gateway JWT validation.
 
-Tests the T1 JWT validation with K3 (public key) and the SQLite
-tenant_id -> K4 lookup.
+Tests the T1 JWT validation with K3 (public key).
 See AUTH_DECISION.md for the full key/token reference.
 """
 
@@ -19,12 +18,6 @@ from mcp_server.auth import (
     DelegationClaims,
     load_public_key,
     validate_delegation_token,
-)
-from mcp_server.tenant_db import (
-    add_tenant,
-    get_tenant_token,
-    list_tenants,
-    remove_tenant,
 )
 
 
@@ -63,14 +56,6 @@ def wrong_key_pair():
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     return private_pem, public_pem
-
-
-@pytest.fixture
-def tenant_db(tmp_path, monkeypatch):
-    """Use a temp SQLite DB for tenant tests."""
-    db_path = str(tmp_path / "test_tenants.db")
-    monkeypatch.setattr("mcp_server.tenant_db._DB_PATH", db_path)
-    return db_path
 
 
 def _mint_t1(
@@ -224,53 +209,3 @@ class TestValidateDelegationToken:
         assert claims.jti == ""
 
 
-# ---------------------------------------------------------------------------
-# Tests: tenant_db
-# ---------------------------------------------------------------------------
-
-
-class TestTenantDB:
-    def test_get_nonexistent_tenant(self, tenant_db):
-        assert get_tenant_token("nonexistent") is None
-
-    def test_add_and_get_tenant(self, tenant_db):
-        add_tenant("t-1", "api_token_123", "Test Tenant")
-        token = get_tenant_token("t-1")
-        assert token == "api_token_123"
-
-    def test_add_tenant_upsert(self, tenant_db):
-        add_tenant("t-1", "old_token")
-        add_tenant("t-1", "new_token")  # Should update
-        assert get_tenant_token("t-1") == "new_token"
-
-    def test_remove_tenant(self, tenant_db):
-        add_tenant("t-1", "token")
-        assert remove_tenant("t-1") is True
-        assert get_tenant_token("t-1") is None
-
-    def test_remove_nonexistent_tenant(self, tenant_db):
-        assert remove_tenant("nonexistent") is False
-
-    def test_list_tenants(self, tenant_db):
-        add_tenant("t-1", "token-1", "Alpha")
-        add_tenant("t-2", "token-2", "Beta")
-        tenants = list_tenants()
-        assert len(tenants) == 2
-        ids = {t["tenant_id"] for t in tenants}
-        assert ids == {"t-1", "t-2"}
-        # Tokens should NOT be in the listing
-        for t in tenants:
-            assert "api_token" not in t
-
-    def test_list_empty(self, tenant_db):
-        assert list_tenants() == []
-
-    def test_multiple_tenants_isolated(self, tenant_db):
-        add_tenant("t-alpha", "token-alpha", "Alpha Inc")
-        add_tenant("t-beta", "token-beta", "Beta Corp")
-        assert get_tenant_token("t-alpha") == "token-alpha"
-        assert get_tenant_token("t-beta") == "token-beta"
-        # Remove one, other stays
-        remove_tenant("t-alpha")
-        assert get_tenant_token("t-alpha") is None
-        assert get_tenant_token("t-beta") == "token-beta"

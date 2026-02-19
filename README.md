@@ -100,7 +100,7 @@ Create a `.env` file (the setup wizard does this automatically):
 | `MCP_SERVER_NAME` | No | `MCP Gateway` | Friendly name for UAVCrew dashboard |
 | `MCP_PUBLIC_URL` | No | - | HTTPS URL where UAVCrew connects |
 | `MCP_JWT_PUBLIC_KEY_PATH` | No | - | Path to K3 public key for JWT auth |
-| `MCP_TENANT_DB_PATH` | No | `tenants.db` | SQLite database for tenant tokens |
+| `CLIENT_API_TOKEN` | No | - | Client API token (K4) for static auth mode |
 | `LOG_LEVEL` | No | `INFO` | Log level: DEBUG, INFO, WARNING, ERROR |
 
 See [.env.example](.env.example) for a full template.

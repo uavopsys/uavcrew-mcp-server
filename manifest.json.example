@@ -1,5 +1,9 @@
 {
   "api_base_url": "https://api.client.com/api/v1",
+  "auth": {
+    "mode": "static",
+    "token_env": "CLIENT_API_TOKEN"
+  },
   "entities": {
     "pilot": {
       "path": "/pilots",

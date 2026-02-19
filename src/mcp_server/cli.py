@@ -6,6 +6,9 @@ Interactive setup wizard and configuration tools.
 Usage:
     uavcrew status             # Check status, manifest, and service
     uavcrew setup              # Interactive configuration wizard
+    uavcrew start              # Start the MCP Gateway service
+    uavcrew stop               # Stop the MCP Gateway service
+    uavcrew restart            # Restart the MCP Gateway service
     uavcrew keys list          # Show configured API keys
     uavcrew keys add <token>   # Add an API key
     uavcrew keys remove <key>  # Remove an API key
@@ -394,14 +397,26 @@ def status():
         else:
             console.print("  [yellow]![/yellow] No API keys configured (server will be open)")
 
-        # Check tenants
-        from .tenant_db import list_tenants
-        tenants = list_tenants()
-        if tenants:
-            console.print(f"  [green]\u2713[/green] {len(tenants)} tenant(s) registered")
-        else:
-            console.print("  [yellow]![/yellow] No tenants registered")
-            console.print("  [dim]Run: uavcrew tenants add --tenant-id <id> --token <key>[/dim]")
+        # Check auth mode from manifest
+        manifest_path = os.environ.get("MCP_MANIFEST_PATH", env_vars.get("MCP_MANIFEST_PATH", "./manifest.json"))
+        try:
+            import json
+            with open(manifest_path) as _mf:
+                _manifest_data = json.load(_mf)
+            auth = _manifest_data.get("auth", {})
+            mode = auth.get("mode", "static")
+            if mode == "static":
+                token_env = auth.get("token_env", "CLIENT_API_TOKEN")
+                has_token = bool(os.environ.get(token_env, env_vars.get(token_env, "")).strip())
+                if has_token:
+                    console.print(f"  [green]\u2713[/green] Token resolution: static ({token_env} configured)")
+                else:
+                    console.print(f"  [yellow]![/yellow] Token resolution: static ({token_env} not set)")
+            elif mode == "dynamic":
+                resolver_path = auth.get("resolver_path", "")
+                console.print(f"  [green]\u2713[/green] Token resolution: dynamic (resolver: {resolver_path})")
+        except Exception:
+            console.print("  [dim]-[/dim] Token resolution: unknown (could not read manifest)")
 
         port = int(env_vars.get("MCP_PORT", "8200"))
         public_url = env_vars.get("MCP_PUBLIC_URL", "")
@@ -826,75 +841,6 @@ def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to rem
         console.print("\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]")
 
 
-# =============================================================================
-# Tenant Management
-# =============================================================================
-
-tenants_app = typer.Typer(help="Manage tenant credentials (K4) used by the gateway to call client APIs.")
-app.add_typer(tenants_app, name="tenants")
-
-
-@tenants_app.command("list")
-def tenants_list():
-    """List registered tenants."""
-    from .tenant_db import list_tenants
-
-    tenants = list_tenants()
-
-    if not tenants:
-        console.print("[yellow]No tenants registered.[/yellow]")
-        console.print("Add one with: [cyan]uavcrew tenants add --tenant-id <id> --token <k4>[/cyan]")
-        return
-
-    console.print(f"\n[bold]Registered Tenants ({len(tenants)}):[/bold]\n")
-
-    table = Table()
-    table.add_column("Tenant ID", style="cyan")
-    table.add_column("Name", style="white")
-    table.add_column("Created", style="dim")
-
-    for t in tenants:
-        table.add_row(t["tenant_id"], t["name"], t["created_at"])
-
-    console.print(table)
-
-
-@tenants_app.command("add")
-def tenants_add(
-    tenant_id: str = typer.Option(..., "--tenant-id", help="Tenant identifier (matches UAVCrew tenant external_id)"),
-    token: str = typer.Option(..., "--token", help="K4 API token for this tenant's client API"),
-    name: str = typer.Option("", "--name", help="Friendly name for this tenant"),
-):
-    """Register a client API credential (K4) for a tenant."""
-    from .tenant_db import add_tenant, get_tenant_token
-
-    existing = get_tenant_token(tenant_id)
-    if existing:
-        console.print(f"[yellow]Tenant '{tenant_id}' already exists — updating token.[/yellow]")
-
-    add_tenant(tenant_id, token, name)
-    console.print(f"[green]\u2713[/green] Registered tenant: {tenant_id}" + (f" ({name})" if name else ""))
-    console.print(f"\n[yellow]Restart the server to apply:[/yellow]")
-    console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
-
-
-@tenants_app.command("remove")
-def tenants_remove(
-    tenant_id: str = typer.Option(..., "--tenant-id", help="Tenant identifier to remove"),
-):
-    """Remove a tenant and its credential."""
-    from .tenant_db import remove_tenant
-
-    removed = remove_tenant(tenant_id)
-    if removed:
-        console.print(f"[green]\u2713[/green] Removed tenant: {tenant_id}")
-        console.print(f"\n[yellow]Restart the server to apply:[/yellow]")
-        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
-    else:
-        console.print(f"[red]Tenant '{tenant_id}' not found.[/red]")
-        console.print("Use [cyan]uavcrew tenants list[/cyan] to see registered tenants.")
-
-
 @app.command()
 def setup():
     """Interactive setup wizard for UAVCrew MCP Gateway."""
@@ -1022,20 +968,93 @@ def setup():
         console.print("  [yellow]![/yellow] No base URL provided - will use api_base_url from manifest.json")
 
     # =========================================================================
-    # STEP 3: Save Configuration
+    # STEP 3: Client API Authentication
     # =========================================================================
     console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 3: Save Configuration[/bold cyan]")
+    console.print("[bold cyan]STEP 3: Client API Authentication[/bold cyan]")
+    console.print("=" * 60)
+    console.print(
+        "\nThe gateway needs an API token (K4) to authenticate when calling your client API.\n"
+        "This can be a single static key, or resolved dynamically per tenant."
+    )
+
+    # Detect existing auth config from manifest
+    existing_auth_mode = "1"
+    existing_token_env = "CLIENT_API_TOKEN"
+    existing_resolver_path = "/internal/mcp/resolve-token"
+    if manifest_path.exists():
+        try:
+            import json as _json
+            with open(manifest_path) as _mf:
+                _existing_manifest = _json.load(_mf)
+            _existing_auth = _existing_manifest.get("auth", {})
+            if _existing_auth.get("mode") == "dynamic":
+                existing_auth_mode = "2"
+                existing_resolver_path = _existing_auth.get("resolver_path", existing_resolver_path)
+            else:
+                existing_token_env = _existing_auth.get("token_env", existing_token_env)
+        except Exception:
+            pass
+
+    console.print("\n[bold]How does the gateway authenticate to your client API?[/bold]")
+    console.print("  1. Single tenant — one API key for all requests")
+    console.print("  2. Multiple tenants — resolve API keys dynamically per tenant")
+
+    auth_choice = Prompt.ask(
+        "\n  Select option",
+        choices=["1", "2"],
+        default=existing_auth_mode,
+    )
+
+    auth_config = {}
+    if auth_choice == "1":
+        token_env = Prompt.ask(
+            "  Env var name for API key",
+            default=existing_token_env,
+        )
+        auth_config = {"mode": "static", "token_env": token_env}
+        console.print(f"  [green]\u2713[/green] Static auth: set {token_env} in .env with your client API key")
+    else:
+        resolver_path = Prompt.ask(
+            "  Resolver endpoint path",
+            default=existing_resolver_path,
+        )
+        auth_config = {"mode": "dynamic", "resolver_path": resolver_path}
+        console.print(f"  [green]\u2713[/green] Dynamic auth: gateway will call {{api_base_url}}{resolver_path}")
+        console.print("  [dim]Your client API must expose this endpoint and validate T1 JWTs.[/dim]")
+
+    # Write auth config to manifest
+    if manifest_path.exists():
+        try:
+            import json as _json
+            with open(manifest_path) as _mf:
+                manifest_data = _json.load(_mf)
+            manifest_data["auth"] = auth_config
+            with open(manifest_path, "w") as _mf:
+                _json.dump(manifest_data, _mf, indent=2)
+                _mf.write("\n")
+            console.print(f"  [green]\u2713[/green] Auth config saved to {manifest_path}")
+        except Exception as e:
+            console.print(f"  [yellow]![/yellow] Could not update manifest: {e}")
+            console.print("  [dim]Add the auth section to manifest.json manually.[/dim]")
+    else:
+        console.print(f"  [yellow]![/yellow] Manifest not found — add auth config when you create it")
+
+    # =========================================================================
+    # STEP 4: Save Configuration
+    # =========================================================================
+    console.print("\n" + "=" * 60)
+    console.print("[bold cyan]STEP 4: Save Configuration[/bold cyan]")
     console.print("=" * 60)
 
     write_env_file(env_path, config)
     console.print(f"\n  [green]\u2713[/green] Configuration saved to {env_path}")
 
     # =========================================================================
-    # STEP 4: Reverse Proxy Setup
+    # STEP 5: Reverse Proxy Setup
     # =========================================================================
     console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 4: Reverse Proxy Setup[/bold cyan]")
+    console.print("[bold cyan]STEP 5: Reverse Proxy Setup[/bold cyan]")
     console.print("=" * 60)
     console.print(
         "\nA reverse proxy handles HTTPS and forwards requests to the MCP gateway.\n"
@@ -1104,10 +1123,10 @@ def setup():
         console.print(f"  Make sure to configure your proxy to forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}")
 
     # =========================================================================
-    # STEP 5: Systemd Service
+    # STEP 6: Systemd Service
     # =========================================================================
     console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 5: Systemd Service[/bold cyan]")
+    console.print("[bold cyan]STEP 6: Systemd Service[/bold cyan]")
     console.print("=" * 60)
     console.print(
         "\nA systemd service keeps the MCP gateway running and starts it on boot."
@@ -1152,18 +1171,34 @@ def setup():
         except Exception:
             pass
 
+    # Auth-mode-specific instructions
+    auth_mode_label = auth_config.get("mode", "static")
+    if auth_mode_label == "static":
+        token_env = auth_config.get("token_env", "CLIENT_API_TOKEN")
+        auth_step = (
+            f"2. Set your client API key in .env:\n"
+            f"   [cyan]{token_env}=<your-api-key>[/cyan]\n"
+        )
+    else:
+        resolver_path = auth_config.get("resolver_path", "/internal/mcp/resolve-token")
+        auth_step = (
+            f"2. Ensure your client API exposes the resolver:\n"
+            f"   [cyan]POST {{api_base_url}}{resolver_path}[/cyan]\n"
+            f"   The gateway calls this with T1 JWT to get K4 per tenant.\n"
+        )
+
     console.print(
         Panel.fit(
             "[bold green]Setup Complete![/bold green]\n\n"
-            f"Server:  {config['MCP_SERVER_NAME']}\n"
-            f"URL:     {config['MCP_PUBLIC_URL']}\n"
-            f"Local:   {config['MCP_HOST']}:{config['MCP_PORT']}"
+            f"Server:     {config['MCP_SERVER_NAME']}\n"
+            f"URL:        {config['MCP_PUBLIC_URL']}\n"
+            f"Local:      {config['MCP_HOST']}:{config['MCP_PORT']}\n"
+            f"Auth mode:  {auth_mode_label}"
             f"{entity_info}\n\n"
             "[bold]Post-Setup Steps:[/bold]\n\n"
             "1. Start the gateway:\n"
             "   [cyan]uavcrew start[/cyan]\n\n"
-            "2. Register a tenant (client API credential):\n"
-            "   [cyan]uavcrew tenants add --tenant-id <org-id> --token <api-key>[/cyan]\n\n"
+            f"{auth_step}\n"
             "3. Register this server on UAVCrew.ai:\n"
             "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
             f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
