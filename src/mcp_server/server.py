@@ -38,7 +38,7 @@ from . import __version__
 from .api_client import ApiClient
 from .auth import DelegationClaims, load_public_key, validate_delegation_token
 from .manifest import load_manifest, get_entity, get_entity_names, get_entity_actions
-from .token_resolver import TokenResolver
+from .token_resolver import ResolveResult, TokenResolver
 
 logger = logging.getLogger(__name__)
 
@@ -404,8 +404,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # No auth configured at all — development mode
         if not _public_key and not _legacy_api_keys:
-            k4 = await _resolver.resolve()
-            _current_token.set(k4)
+            result = await _resolver.resolve()
+            _current_token.set(result.token)
             _current_claims.set(None)
             _current_t1_jwt.set(None)
             try:
@@ -424,23 +424,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
             claims = validate_delegation_token(token, _public_key)
             if claims:
                 # Resolve K4 for this tenant (static or dynamic)
-                k4 = await _resolver.resolve(claims.tenant_id, token)
-                if not k4:
+                result = await _resolver.resolve(claims.tenant_id, token)
+                if not result.ok:
+                    resolver_url = getattr(_resolver, "resolver_url", None)
                     logger.warning(
-                        "No K4 for tenant %s (agent=%s, jti=%s)",
+                        "K4 resolution failed for tenant %s: reason=%s, "
+                        "resolver_url=%s, agent=%s, jti=%s",
                         claims.tenant_id,
+                        result.reason,
+                        resolver_url,
                         claims.agent,
                         claims.jti,
                     )
                     return JSONResponse(
                         status_code=403,
                         content={
-                            "error": f"No API token for tenant"
-                            f" '{claims.tenant_id}'"
+                            "error": f"K4 resolution failed for tenant"
+                            f" '{claims.tenant_id}'",
+                            "reason": result.reason,
                         },
                     )
                 _current_claims.set(claims)
-                _current_token.set(k4)
+                _current_token.set(result.token)
                 _current_t1_jwt.set(token)
                 try:
                     return await call_next(request)
@@ -456,8 +461,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Legacy: static API key check
         if _legacy_api_keys and token in _legacy_api_keys:
-            k4 = await _resolver.resolve()
-            _current_token.set(k4)
+            result = await _resolver.resolve()
+            if not result.ok:
+                logger.warning(
+                    "Legacy API key auth: K4 resolution failed (reason=%s). "
+                    "If manifest auth.mode is 'dynamic', legacy API keys cannot "
+                    "resolve K4 — T1 JWT is required for multi-tenant deployments.",
+                    result.reason,
+                )
+            _current_token.set(result.token)
             _current_claims.set(None)
             _current_t1_jwt.set(None)
             try:
@@ -493,6 +505,7 @@ async def health():
     entity_count = len(get_entity_names(_manifest))
     auth_mode = "jwt" if _public_key else ("api_key" if _legacy_api_keys else "none")
     token_mode = _manifest.get("auth", {}).get("mode", "static")
+    resolver_url = getattr(_resolver, "resolver_url", None)
     return {
         "status": "healthy",
         "service": "mcp-gateway",
@@ -500,6 +513,7 @@ async def health():
         "entities": entity_count,
         "auth_mode": auth_mode,
         "token_resolution": token_mode,
+        "resolver_url": resolver_url,
     }
 
 
@@ -517,11 +531,14 @@ def _print_banner(host: str, port: int):
         "API key (legacy)" if _legacy_api_keys else "none (dev mode)"
     )
     token_mode = _manifest.get("auth", {}).get("mode", "static")
+    resolver_url = getattr(_resolver, "resolver_url", None)
     print(f"\nStarting UAVCrew MCP Gateway v{__version__} on {host}:{port}")
     print(f"  MCP endpoint:  POST http://{host}:{port}/mcp")
     print(f"  Health check:  GET  http://{host}:{port}/health")
     print(f"  Auth mode:     {auth_mode}")
     print(f"  Token resolve: {token_mode}")
+    if resolver_url:
+        print(f"  Resolver URL:  {resolver_url}")
     print(f"  Entities ({len(entity_names)}): {', '.join(entity_names)}")
     print(f"  Tools (4): get_entity, list_entities, search, action\n")
 

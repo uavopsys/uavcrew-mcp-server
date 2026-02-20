@@ -1,8 +1,10 @@
-"""Tests for API client error sanitization."""
+"""Tests for API client: error sanitization and HTTP request handling."""
 
 import pytest
+import httpx
+import respx
 
-from mcp_server.api_client import _sanitize_error_details
+from mcp_server.api_client import ApiClient, _sanitize_error_details
 
 
 class TestSanitizeErrorDetails:
@@ -71,3 +73,124 @@ class TestSanitizeErrorDetails:
         assert "<div" not in result
         assert "Page not found" in result
         assert len(result) <= 503  # max 500 + "..."
+
+
+class TestApiClientRequests:
+    """Test actual HTTP request handling with K4 bearer token."""
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_get_sends_bearer_token(self):
+        """K4 is sent as Authorization: Bearer header."""
+        client = ApiClient("https://api.example.com/api/v1")
+
+        route = respx.get("https://api.example.com/api/v1/pilots").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+
+        await client.get("/pilots", "my-k4-token")
+
+        assert route.called
+        request = route.calls[0].request
+        assert request.headers["authorization"] == "Bearer my-k4-token"
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_get_success_returns_data(self):
+        """200 response → {success: true, data: ..., status_code: 200}."""
+        client = ApiClient("https://api.example.com")
+
+        respx.get("https://api.example.com/pilots/P-42").mock(
+            return_value=httpx.Response(
+                200, json={"id": "P-42", "name": "Test Pilot"}
+            )
+        )
+
+        result = await client.get("/pilots/P-42", "k4")
+        assert result["success"] is True
+        assert result["data"]["id"] == "P-42"
+        assert result["status_code"] == 200
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_get_error_returns_details(self):
+        """404 response → {success: false, error: ..., details: ...}."""
+        client = ApiClient("https://api.example.com")
+
+        respx.get("https://api.example.com/pilots/unknown").mock(
+            return_value=httpx.Response(
+                404, json={"error": "Pilot not found"}
+            )
+        )
+
+        result = await client.get("/pilots/unknown", "k4")
+        assert result["success"] is False
+        assert result["status_code"] == 404
+        assert "details" in result
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_post_sends_json_body(self):
+        """POST sends params as JSON body."""
+        client = ApiClient("https://api.example.com")
+
+        route = respx.post("https://api.example.com/pilots").mock(
+            return_value=httpx.Response(201, json={"id": "P-99"})
+        )
+
+        await client.post("/pilots", "k4", params={"name": "New Pilot"})
+
+        import json
+        body = json.loads(route.calls[0].request.content)
+        assert body["name"] == "New Pilot"
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_timeout_returns_504(self):
+        """Request timeout → {success: false, status_code: 504}."""
+        client = ApiClient("https://api.example.com", timeout=1.0)
+
+        respx.get("https://api.example.com/slow").mock(
+            side_effect=httpx.ReadTimeout("timed out")
+        )
+
+        result = await client.get("/slow", "k4")
+        assert result["success"] is False
+        assert result["status_code"] == 504
+        assert "timed out" in result["error"].lower()
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_connection_error_returns_502(self):
+        """Connection refused → {success: false, status_code: 502}."""
+        client = ApiClient("https://api.example.com")
+
+        respx.get("https://api.example.com/down").mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+
+        result = await client.get("/down", "k4")
+        assert result["success"] is False
+        assert result["status_code"] == 502
+
+    def test_url_construction(self):
+        """Base URL + path are concatenated correctly."""
+        client = ApiClient("https://api.example.com/api/v1/")
+        # Trailing slash should be stripped
+        assert client.base_url == "https://api.example.com/api/v1"
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_get_with_query_params(self):
+        """GET sends query parameters."""
+        client = ApiClient("https://api.example.com")
+
+        route = respx.get("https://api.example.com/pilots").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        await client.get("/pilots", "k4", query={"limit": 10, "status": "active"})
+
+        request = route.calls[0].request
+        assert "limit=10" in str(request.url)
+        assert "status=active" in str(request.url)

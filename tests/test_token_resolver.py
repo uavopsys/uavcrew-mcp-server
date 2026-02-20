@@ -9,7 +9,7 @@ import pytest
 import httpx
 import respx
 
-from mcp_server.token_resolver import TokenResolver
+from mcp_server.token_resolver import ResolveResult, TokenResolver
 
 
 class TestStaticMode:
@@ -32,7 +32,9 @@ class TestStaticMode:
             "https://api.example.com",
         )
         result = await resolver.resolve()
-        assert result == "test-k4-token"
+        assert result.ok
+        assert result.token == "test-k4-token"
+        assert result.reason == "ok"
 
     @pytest.mark.anyio
     async def test_static_resolve_ignores_tenant_id(self, monkeypatch):
@@ -42,7 +44,8 @@ class TestStaticMode:
             "https://api.example.com",
         )
         result = await resolver.resolve(tenant_id="any-id", t1_jwt="any-jwt")
-        assert result == "the-token"
+        assert result.ok
+        assert result.token == "the-token"
 
     @pytest.mark.anyio
     async def test_static_missing_env_var(self, monkeypatch):
@@ -52,7 +55,9 @@ class TestStaticMode:
             "https://api.example.com",
         )
         result = await resolver.resolve()
-        assert result is None
+        assert not result.ok
+        assert result.token is None
+        assert result.reason == "missing_env_var"
 
     def test_static_custom_env_var(self, monkeypatch):
         monkeypatch.setenv("CUSTOM_KEY", "custom-value")
@@ -96,7 +101,9 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="tenant-123", t1_jwt="valid.jwt.token")
-        assert result == "resolved-k4-token"
+        assert result.ok
+        assert result.token == "resolved-k4-token"
+        assert result.reason == "ok"
 
     @pytest.mark.anyio
     @respx.mock
@@ -147,7 +154,9 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="unknown", t1_jwt="jwt")
-        assert result is None
+        assert not result.ok
+        assert result.token is None
+        assert result.reason == "resolver_http_404"
 
     @pytest.mark.anyio
     @respx.mock
@@ -162,7 +171,8 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="t1", t1_jwt="bad-jwt")
-        assert result is None
+        assert not result.ok
+        assert result.reason == "resolver_http_401"
 
     @pytest.mark.anyio
     @respx.mock
@@ -177,7 +187,8 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="t1", t1_jwt="jwt")
-        assert result is None
+        assert not result.ok
+        assert result.reason == "no_api_token_in_response"
 
     @pytest.mark.anyio
     async def test_dynamic_missing_jwt(self):
@@ -186,7 +197,8 @@ class TestDynamicMode:
             "https://api.example.com",
         )
         result = await resolver.resolve(tenant_id="t1", t1_jwt=None)
-        assert result is None
+        assert not result.ok
+        assert result.reason == "missing_jwt_for_dynamic_mode"
 
     @pytest.mark.anyio
     async def test_dynamic_missing_tenant_id(self):
@@ -195,7 +207,8 @@ class TestDynamicMode:
             "https://api.example.com",
         )
         result = await resolver.resolve(tenant_id=None, t1_jwt="jwt")
-        assert result is None
+        assert not result.ok
+        assert result.reason == "missing_tenant_id"
 
     @pytest.mark.anyio
     @respx.mock
@@ -210,7 +223,8 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="t1", t1_jwt="jwt")
-        assert result is None
+        assert not result.ok
+        assert result.reason == "resolver_timeout"
 
     @pytest.mark.anyio
     @respx.mock
@@ -225,7 +239,8 @@ class TestDynamicMode:
         )
 
         result = await resolver.resolve(tenant_id="t1", t1_jwt="jwt")
-        assert result is None
+        assert not result.ok
+        assert result.reason == "resolver_connection_error"
 
 
 class TestInvalidConfig:

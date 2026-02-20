@@ -10,6 +10,7 @@ See AUTH_DECISION.md for the full key/token reference.
 
 import logging
 import os
+from dataclasses import dataclass
 
 import httpx
 
@@ -17,6 +18,20 @@ logger = logging.getLogger(__name__)
 
 # Timeout for resolver endpoint calls (seconds)
 _RESOLVER_TIMEOUT = 10.0
+
+
+@dataclass
+class ResolveResult:
+    """Result of a K4 token resolution attempt."""
+
+    token: str | None
+    reason: str  # "ok", "missing_env_var", "missing_jwt", "missing_tenant_id",
+    #              "resolver_timeout", "resolver_connection_error",
+    #              "resolver_http_NNN", "no_api_token_in_response", "not_configured"
+
+    @property
+    def ok(self) -> bool:
+        return self.token is not None
 
 
 class TokenResolver:
@@ -35,6 +50,7 @@ class TokenResolver:
             api_base_url: Base URL of the client API (for building resolver URL).
         """
         self.mode = auth_config.get("mode", "static")
+        self.resolver_url: str | None = None
 
         if self.mode == "static":
             env_var = auth_config.get("token_env", "CLIENT_API_TOKEN")
@@ -48,7 +64,7 @@ class TokenResolver:
 
     async def resolve(
         self, tenant_id: str | None = None, t1_jwt: str | None = None
-    ) -> str | None:
+    ) -> ResolveResult:
         """Resolve K4 for a tenant.
 
         Args:
@@ -56,15 +72,24 @@ class TokenResolver:
             t1_jwt: Raw T1 JWT string. Used as Bearer auth for dynamic resolver.
 
         Returns:
-            K4 token string, or None if resolution fails (fail closed).
+            ResolveResult with token (or None) and a reason string.
         """
         if self.mode == "static":
-            return self.static_token
+            if self.static_token:
+                return ResolveResult(self.static_token, "ok")
+            return ResolveResult(None, "missing_env_var")
 
         if self.mode == "dynamic":
-            if not t1_jwt or not tenant_id:
-                logger.warning("Dynamic resolver requires tenant_id and T1 JWT")
-                return None
+            if not t1_jwt:
+                logger.warning(
+                    "Dynamic resolver requires T1 JWT — legacy API key auth "
+                    "cannot resolve K4 in dynamic mode"
+                )
+                return ResolveResult(None, "missing_jwt_for_dynamic_mode")
+
+            if not tenant_id:
+                logger.warning("Dynamic resolver requires tenant_id")
+                return ResolveResult(None, "missing_tenant_id")
 
             try:
                 async with httpx.AsyncClient(timeout=_RESOLVER_TIMEOUT) as client:
@@ -83,12 +108,12 @@ class TokenResolver:
                             tenant_id,
                             self.resolver_url,
                         )
-                        return token
+                        return ResolveResult(token, "ok")
                     logger.warning(
                         "Resolver returned 200 but no api_token for tenant %s",
                         tenant_id,
                     )
-                    return None
+                    return ResolveResult(None, "no_api_token_in_response")
 
                 logger.warning(
                     "Resolver returned %d for tenant %s: %s",
@@ -96,7 +121,7 @@ class TokenResolver:
                     tenant_id,
                     resp.text[:200],
                 )
-                return None
+                return ResolveResult(None, f"resolver_http_{resp.status_code}")
 
             except httpx.TimeoutException:
                 logger.error(
@@ -104,7 +129,7 @@ class TokenResolver:
                     tenant_id,
                     self.resolver_url,
                 )
-                return None
+                return ResolveResult(None, "resolver_timeout")
 
             except httpx.RequestError as e:
                 logger.error(
@@ -112,6 +137,6 @@ class TokenResolver:
                     tenant_id,
                     e,
                 )
-                return None
+                return ResolveResult(None, "resolver_connection_error")
 
-        return None
+        return ResolveResult(None, "not_configured")
