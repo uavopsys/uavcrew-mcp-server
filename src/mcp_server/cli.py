@@ -1041,6 +1041,17 @@ def setup():
         console.print(f"  [yellow]![/yellow] Manifest not found — add auth config when you create it")
 
     # =========================================================================
+    # Auto-detect K3 public key
+    # =========================================================================
+    # K3 ships with the MCP server in keys/k3_public.pem
+    k3_path = Path.cwd() / "keys" / "k3_public.pem"
+    if k3_path.exists():
+        config["MCP_JWT_PUBLIC_KEY_PATH"] = str(k3_path)
+        console.print(f"\n  [green]\u2713[/green] K3 public key: {k3_path}")
+    elif existing.get("MCP_JWT_PUBLIC_KEY_PATH"):
+        config["MCP_JWT_PUBLIC_KEY_PATH"] = existing["MCP_JWT_PUBLIC_KEY_PATH"]
+
+    # =========================================================================
     # STEP 4: Save Configuration
     # =========================================================================
     console.print("\n" + "=" * 60)
