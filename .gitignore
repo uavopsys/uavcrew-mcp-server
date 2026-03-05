@@ -43,6 +43,9 @@ caddy-mcp.conf
 nginx-mcp.conf
 apache-mcp.conf
 
+# Docker setup output (customer-specific config)
+config/
+
 # Database (demo db can be regenerated)
 *.db
 *.sqlite

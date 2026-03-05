@@ -16,6 +16,7 @@ Usage:
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -792,7 +793,10 @@ def keys_add(token: str = typer.Argument(..., help="API token from UAVCrew dashb
     console.print(f"[green]\u2713[/green] Added key: {_mask_key(token)}")
     console.print(f"[dim]Total keys: {len(keys)}[/dim]")
     console.print("\n[yellow]Restart the server to apply:[/yellow]")
-    console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+    if Path("docker-compose.yml").exists():
+        console.print("  [cyan]docker compose restart[/cyan]")
+    else:
+        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
 
 
 @keys_app.command("remove")
@@ -836,24 +840,37 @@ def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to rem
 
     if keys:
         console.print("\n[yellow]Restart the server to apply:[/yellow]")
-        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+        if Path("docker-compose.yml").exists():
+            console.print("  [cyan]docker compose restart[/cyan]")
+        else:
+            console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
     else:
         console.print("\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]")
 
 
 @app.command()
-def setup():
+def setup(
+    docker: bool = typer.Option(False, "--docker", help="Generate Docker Compose config instead of systemd"),
+):
     """Interactive setup wizard for UAVCrew MCP Gateway."""
+    mode_label = "Docker" if docker else "Host"
     console.print(
         Panel.fit(
-            "[bold blue]UAVCrew MCP Gateway Setup[/bold blue]\n\n"
+            f"[bold blue]UAVCrew MCP Gateway Setup[/bold blue] [dim]({mode_label})[/dim]\n\n"
             "This wizard will configure your MCP gateway to connect with UAVCrew.ai.\n"
             "The gateway translates entity operations into client API calls.",
             border_style="blue",
         )
     )
 
-    env_path = Path.cwd() / ".env"
+    # Docker mode writes config into a config/ subdirectory
+    if docker:
+        config_dir = Path.cwd() / "config"
+        config_dir.mkdir(exist_ok=True)
+        env_path = config_dir / ".env"
+    else:
+        config_dir = None
+        env_path = Path.cwd() / ".env"
     existing = {}
 
     # Load existing config if available
@@ -898,15 +915,21 @@ def setup():
 
     # Local binding
     console.print("\n[bold]Local Server Binding[/bold]")
-    console.print("  The MCP gateway listens locally on this host:port.")
-    console.print("  Your reverse proxy (Caddy/Nginx) will forward HTTPS traffic here.")
+    if docker:
+        console.print("  The container listens on this host:port internally.")
+        console.print("  Map the port in docker-compose.yml to expose it.")
+    else:
+        console.print("  The MCP gateway listens locally on this host:port.")
+        console.print("  Your reverse proxy (Caddy/Nginx) will forward HTTPS traffic here.")
+    default_host = "0.0.0.0" if docker else "127.0.0.1"
+    default_port = "8400" if docker else "8200"
     config["MCP_HOST"] = Prompt.ask(
         "  Listen address",
-        default=existing.get("MCP_HOST", "127.0.0.1"),
+        default=existing.get("MCP_HOST", default_host),
     )
     config["MCP_PORT"] = Prompt.ask(
         "  Listen port",
-        default=existing.get("MCP_PORT", "8200"),
+        default=existing.get("MCP_PORT", default_port),
     )
 
     # =========================================================================
@@ -924,13 +947,20 @@ def setup():
     console.print("\n[bold]Manifest File[/bold]")
     console.print("  Path to manifest.json that defines entities and API paths.")
     console.print("  See manifest.json.example for the reference format.")
-    config["MCP_MANIFEST_PATH"] = Prompt.ask(
+    if docker:
+        default_manifest = "./config/manifest.json"
+    else:
+        default_manifest = "./manifest.json"
+    manifest_rel_path = Prompt.ask(
         "\n  Manifest path",
-        default=existing.get("MCP_MANIFEST_PATH", "./manifest.json"),
+        default=existing.get("MCP_MANIFEST_PATH", default_manifest),
     )
+    # In Docker mode, don't write MCP_MANIFEST_PATH to .env — Dockerfile ENV handles it
+    if not docker:
+        config["MCP_MANIFEST_PATH"] = manifest_rel_path
 
     # Validate manifest if it exists
-    manifest_path = Path(config["MCP_MANIFEST_PATH"])
+    manifest_path = Path(manifest_rel_path)
     if manifest_path.exists():
         try:
             from .manifest import load_manifest, get_entity_names
@@ -944,12 +974,12 @@ def setup():
     else:
         example_path = Path("manifest.json.example")
         if example_path.exists():
-            import shutil
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(example_path, manifest_path)
             console.print(f"  [green]\u2713[/green] Copied manifest.json.example → {manifest_path}")
             console.print("  [dim]Edit manifest.json to customize entity paths for your API.[/dim]")
         else:
-            console.print(f"  [yellow]![/yellow] Manifest not found at {config['MCP_MANIFEST_PATH']}")
+            console.print(f"  [yellow]![/yellow] Manifest not found at {manifest_rel_path}")
             console.print("  [dim]Create a manifest.json before starting the server.[/dim]")
 
     # Client API base URL
@@ -1045,7 +1075,14 @@ def setup():
     # =========================================================================
     # K3 ships with the MCP server in keys/k3_public.pem
     k3_path = Path.cwd() / "keys" / "k3_public.pem"
-    if k3_path.exists():
+    if docker and k3_path.exists():
+        # Copy K3 key into config/keys/ for Docker volume mount
+        k3_dest = config_dir / "keys" / "k3_public.pem"
+        k3_dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(k3_path, k3_dest)
+        console.print(f"\n  [green]\u2713[/green] K3 public key copied to {k3_dest}")
+        # Don't write MCP_JWT_PUBLIC_KEY_PATH to .env — Dockerfile ENV handles it
+    elif k3_path.exists():
         config["MCP_JWT_PUBLIC_KEY_PATH"] = str(k3_path)
         console.print(f"\n  [green]\u2713[/green] K3 public key: {k3_path}")
     elif existing.get("MCP_JWT_PUBLIC_KEY_PATH"):
@@ -1061,110 +1098,139 @@ def setup():
     write_env_file(env_path, config)
     console.print(f"\n  [green]\u2713[/green] Configuration saved to {env_path}")
 
-    # =========================================================================
-    # STEP 5: Reverse Proxy Setup
-    # =========================================================================
-    console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 5: Reverse Proxy Setup[/bold cyan]")
-    console.print("=" * 60)
-    console.print(
-        "\nA reverse proxy handles HTTPS and forwards requests to the MCP gateway.\n"
-        "This makes your server accessible at your public URL with SSL encryption."
-    )
+    if docker:
+        # =================================================================
+        # STEP 5: Docker Compose (replaces reverse proxy + systemd)
+        # =================================================================
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]STEP 5: Docker Compose[/bold cyan]")
+        console.print("=" * 60)
+        console.print(
+            "\nDocker handles service management. Your reverse proxy\n"
+            f"should forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}."
+        )
 
-    console.print("\n[bold]What reverse proxy do you use?[/bold]")
-    console.print("  1. Caddy [green](recommended - automatic HTTPS)[/green]")
-    console.print("  2. Nginx")
-    console.print("  3. Apache")
-    console.print("  4. None / I'll configure it myself")
+        compose_path = Path.cwd() / "docker-compose.yml"
+        compose_content = _generate_docker_compose(config)
 
-    proxy_choice = Prompt.ask(
-        "\n  Select option",
-        choices=["1", "2", "3", "4"],
-        default="1",
-    )
-
-    # Extract domain from public URL
-    domain = config["MCP_PUBLIC_URL"].replace("https://", "").replace("http://", "").rstrip("/")
-
-    proxy_configs = {
-        "1": ("caddy-mcp.conf", generate_caddy_config, "Add to /etc/caddy/Caddyfile"),
-        "2": ("nginx-mcp.conf", generate_nginx_config, f"/etc/nginx/sites-available/{domain}"),
-        "3": ("apache-mcp.conf", generate_apache_config, f"/etc/apache2/sites-available/{domain}.conf"),
-    }
-
-    if proxy_choice in proxy_configs:
-        filename, generator, panel_title = proxy_configs[proxy_choice]
-        config_file = Path(filename)
-
-        proxy_config = generator(domain)
-
-        if config_file.exists() and config_file.read_text().strip() == proxy_config.strip():
-            console.print(f"\n  [green]\u2713[/green] {filename} already configured for {domain}")
+        if compose_path.exists():
+            console.print(f"\n  [yellow]![/yellow] docker-compose.yml already exists")
+            if Confirm.ask("  Overwrite?", default=False):
+                with open(compose_path, "w") as f:
+                    f.write(compose_content)
+                console.print(f"  [green]\u2713[/green] docker-compose.yml updated")
+            else:
+                console.print("  [dim]Keeping existing docker-compose.yml[/dim]")
         else:
-            console.print(f"\n[bold]Configuration:[/bold]")
-            console.print(Panel(proxy_config, title=panel_title))
-
-            if proxy_choice == "1":
-                console.print("\n[bold]To apply:[/bold]")
-                console.print("  1. Add the above to your Caddyfile")
-                console.print("  2. Run: [cyan]sudo systemctl reload caddy[/cyan]")
-                console.print("\n  Caddy will automatically obtain and renew SSL certificates.")
-            elif proxy_choice == "2":
-                console.print("\n[bold]To apply:[/bold]")
-                console.print(f"  1. Save to /etc/nginx/sites-available/{domain}")
-                console.print(f"  2. Run: [cyan]sudo ln -s /etc/nginx/sites-available/{domain} /etc/nginx/sites-enabled/[/cyan]")
-                console.print(f"  3. Get SSL cert: [cyan]sudo certbot --nginx -d {domain}[/cyan]")
-                console.print("  4. Run: [cyan]sudo systemctl reload nginx[/cyan]")
-            elif proxy_choice == "3":
-                console.print("\n[bold]To apply:[/bold]")
-                console.print("  1. Enable required modules: [cyan]sudo a2enmod proxy proxy_http ssl[/cyan]")
-                console.print(f"  2. Save to /etc/apache2/sites-available/{domain}.conf")
-                console.print(f"  3. Run: [cyan]sudo a2ensite {domain}[/cyan]")
-                console.print(f"  4. Get SSL cert: [cyan]sudo certbot --apache -d {domain}[/cyan]")
-                console.print("  5. Run: [cyan]sudo systemctl reload apache2[/cyan]")
-
-            if Confirm.ask(f"\n  Save config to ./{filename}?", default=True):
-                with open(filename, "w") as f:
-                    f.write(proxy_config)
-                console.print(f"  [green]\u2713[/green] Saved to ./{filename}")
+            with open(compose_path, "w") as f:
+                f.write(compose_content)
+            console.print(f"\n  [green]\u2713[/green] docker-compose.yml created")
 
     else:
-        console.print("\n  Skipping reverse proxy configuration.")
-        console.print(f"  Make sure to configure your proxy to forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}")
+        # =================================================================
+        # STEP 5: Reverse Proxy Setup (host mode)
+        # =================================================================
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]STEP 5: Reverse Proxy Setup[/bold cyan]")
+        console.print("=" * 60)
+        console.print(
+            "\nA reverse proxy handles HTTPS and forwards requests to the MCP gateway.\n"
+            "This makes your server accessible at your public URL with SSL encryption."
+        )
 
-    # =========================================================================
-    # STEP 6: Systemd Service
-    # =========================================================================
-    console.print("\n" + "=" * 60)
-    console.print("[bold cyan]STEP 6: Systemd Service[/bold cyan]")
-    console.print("=" * 60)
-    console.print(
-        "\nA systemd service keeps the MCP gateway running and starts it on boot."
-    )
+        console.print("\n[bold]What reverse proxy do you use?[/bold]")
+        console.print("  1. Caddy [green](recommended - automatic HTTPS)[/green]")
+        console.print("  2. Nginx")
+        console.print("  3. Apache")
+        console.print("  4. None / I'll configure it myself")
 
-    service_file = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
-    if service_file.exists():
-        paths = detect_paths()
-        expected = generate_systemd_unit(paths, env_path)
-        try:
-            installed = service_file.read_text()
-        except PermissionError:
-            proc = subprocess.run(
-                ["sudo", "cat", str(service_file)],
-                capture_output=True, text=True,
-            )
-            installed = proc.stdout
+        proxy_choice = Prompt.ask(
+            "\n  Select option",
+            choices=["1", "2", "3", "4"],
+            default="1",
+        )
 
-        if installed.strip() == expected.strip():
-            console.print(f"\n  [green]\u2713[/green] Systemd service already installed and up to date")
+        # Extract domain from public URL
+        domain = config["MCP_PUBLIC_URL"].replace("https://", "").replace("http://", "").rstrip("/")
+
+        proxy_configs = {
+            "1": ("caddy-mcp.conf", generate_caddy_config, "Add to /etc/caddy/Caddyfile"),
+            "2": ("nginx-mcp.conf", generate_nginx_config, f"/etc/nginx/sites-available/{domain}"),
+            "3": ("apache-mcp.conf", generate_apache_config, f"/etc/apache2/sites-available/{domain}.conf"),
+        }
+
+        if proxy_choice in proxy_configs:
+            filename, generator, panel_title = proxy_configs[proxy_choice]
+            config_file = Path(filename)
+
+            proxy_config = generator(domain)
+
+            if config_file.exists() and config_file.read_text().strip() == proxy_config.strip():
+                console.print(f"\n  [green]\u2713[/green] {filename} already configured for {domain}")
+            else:
+                console.print(f"\n[bold]Configuration:[/bold]")
+                console.print(Panel(proxy_config, title=panel_title))
+
+                if proxy_choice == "1":
+                    console.print("\n[bold]To apply:[/bold]")
+                    console.print("  1. Add the above to your Caddyfile")
+                    console.print("  2. Run: [cyan]sudo systemctl reload caddy[/cyan]")
+                    console.print("\n  Caddy will automatically obtain and renew SSL certificates.")
+                elif proxy_choice == "2":
+                    console.print("\n[bold]To apply:[/bold]")
+                    console.print(f"  1. Save to /etc/nginx/sites-available/{domain}")
+                    console.print(f"  2. Run: [cyan]sudo ln -s /etc/nginx/sites-available/{domain} /etc/nginx/sites-enabled/[/cyan]")
+                    console.print(f"  3. Get SSL cert: [cyan]sudo certbot --nginx -d {domain}[/cyan]")
+                    console.print("  4. Run: [cyan]sudo systemctl reload nginx[/cyan]")
+                elif proxy_choice == "3":
+                    console.print("\n[bold]To apply:[/bold]")
+                    console.print("  1. Enable required modules: [cyan]sudo a2enmod proxy proxy_http ssl[/cyan]")
+                    console.print(f"  2. Save to /etc/apache2/sites-available/{domain}.conf")
+                    console.print(f"  3. Run: [cyan]sudo a2ensite {domain}[/cyan]")
+                    console.print(f"  4. Get SSL cert: [cyan]sudo certbot --apache -d {domain}[/cyan]")
+                    console.print("  5. Run: [cyan]sudo systemctl reload apache2[/cyan]")
+
+                if Confirm.ask(f"\n  Save config to ./{filename}?", default=True):
+                    with open(filename, "w") as f:
+                        f.write(proxy_config)
+                    console.print(f"  [green]\u2713[/green] Saved to ./{filename}")
+
         else:
-            console.print(f"\n  [yellow]![/yellow] Systemd service exists but config has changed")
-            if Confirm.ask("  Regenerate and reinstall?", default=True):
+            console.print("\n  Skipping reverse proxy configuration.")
+            console.print(f"  Make sure to configure your proxy to forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}")
+
+        # =================================================================
+        # STEP 6: Systemd Service (host mode only)
+        # =================================================================
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]STEP 6: Systemd Service[/bold cyan]")
+        console.print("=" * 60)
+        console.print(
+            "\nA systemd service keeps the MCP gateway running and starts it on boot."
+        )
+
+        service_file = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
+        if service_file.exists():
+            paths = detect_paths()
+            expected = generate_systemd_unit(paths, env_path)
+            try:
+                installed = service_file.read_text()
+            except PermissionError:
+                proc = subprocess.run(
+                    ["sudo", "cat", str(service_file)],
+                    capture_output=True, text=True,
+                )
+                installed = proc.stdout
+
+            if installed.strip() == expected.strip():
+                console.print(f"\n  [green]\u2713[/green] Systemd service already installed and up to date")
+            else:
+                console.print(f"\n  [yellow]![/yellow] Systemd service exists but config has changed")
+                if Confirm.ask("  Regenerate and reinstall?", default=True):
+                    _generate_systemd(env_path)
+        else:
+            if Confirm.ask("\n  Generate and install systemd service?", default=True):
                 _generate_systemd(env_path)
-    else:
-        if Confirm.ask("\n  Generate and install systemd service?", default=True):
-            _generate_systemd(env_path)
 
     # =========================================================================
     # DONE
@@ -1173,12 +1239,11 @@ def setup():
 
     # Count entities if manifest is available
     entity_info = ""
-    manifest_path = Path(config["MCP_MANIFEST_PATH"])
     if manifest_path.exists():
         try:
             from .manifest import load_manifest, get_entity_names
             m = load_manifest(str(manifest_path))
-            entity_info = f"\nEntities: {len(get_entity_names(m))} (from {config['MCP_MANIFEST_PATH']})"
+            entity_info = f"\nEntities: {len(get_entity_names(m))} (from {manifest_rel_path})"
         except Exception:
             pass
 
@@ -1186,8 +1251,9 @@ def setup():
     auth_mode_label = auth_config.get("mode", "static")
     if auth_mode_label == "static":
         token_env = auth_config.get("token_env", "CLIENT_API_TOKEN")
+        env_file_label = "config/.env" if docker else ".env"
         auth_step = (
-            f"2. Set your client API key in .env:\n"
+            f"2. Set your client API key in {env_file_label}:\n"
             f"   [cyan]{token_env}=<your-api-key>[/cyan]\n"
         )
     else:
@@ -1198,34 +1264,93 @@ def setup():
             f"   The gateway calls this with T1 JWT to get K4 per tenant.\n"
         )
 
-    console.print(
-        Panel.fit(
-            "[bold green]Setup Complete![/bold green]\n\n"
-            f"Server:     {config['MCP_SERVER_NAME']}\n"
-            f"URL:        {config['MCP_PUBLIC_URL']}\n"
-            f"Local:      {config['MCP_HOST']}:{config['MCP_PORT']}\n"
-            f"Auth mode:  {auth_mode_label}"
-            f"{entity_info}\n\n"
-            "[bold]Post-Setup Steps:[/bold]\n\n"
-            "1. Start the gateway:\n"
-            "   [cyan]uavcrew start[/cyan]\n\n"
-            f"{auth_step}\n"
-            "3. Register this server on UAVCrew.ai:\n"
-            "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
-            f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
-            f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
-            "   Copy the connection token\n\n"
-            "4. Add the connection token:\n"
-            "   [cyan]uavcrew keys add <token-from-step-3>[/cyan]\n\n"
-            "5. Restart to apply:\n"
-            "   [cyan]uavcrew restart[/cyan]\n\n"
-            "[bold]Commands:[/bold]\n"
-            "  [cyan]uavcrew status[/cyan]    - Check health and configuration\n"
-            "  [cyan]uavcrew start[/cyan]     - Start the service\n"
-            "  [cyan]uavcrew restart[/cyan]   - Restart after config changes",
-            border_style="green",
+    if docker:
+        console.print(
+            Panel.fit(
+                "[bold green]Setup Complete![/bold green]\n\n"
+                f"Server:     {config['MCP_SERVER_NAME']}\n"
+                f"URL:        {config['MCP_PUBLIC_URL']}\n"
+                f"Port:       {config['MCP_PORT']}\n"
+                f"Auth mode:  {auth_mode_label}"
+                f"{entity_info}\n\n"
+                "[bold]Post-Setup Steps:[/bold]\n\n"
+                "1. Start the gateway:\n"
+                "   [cyan]docker compose up -d[/cyan]\n\n"
+                f"{auth_step}\n"
+                "3. Register this server on UAVCrew.ai:\n"
+                "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
+                f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
+                f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
+                "   Copy the connection token\n\n"
+                "4. Add the connection token to config/.env:\n"
+                "   [cyan]MCP_API_KEY=<token-from-step-3>[/cyan]\n\n"
+                "5. Restart to apply:\n"
+                "   [cyan]docker compose restart[/cyan]\n\n"
+                "[bold]Commands:[/bold]\n"
+                "  [cyan]docker compose up -d[/cyan]       - Start the service\n"
+                "  [cyan]docker compose logs -f[/cyan]     - View logs\n"
+                "  [cyan]docker compose restart[/cyan]     - Restart after config changes\n"
+                f"  [cyan]curl http://localhost:{config['MCP_PORT']}/health[/cyan]  - Check health",
+                border_style="green",
+            )
         )
-    )
+    else:
+        console.print(
+            Panel.fit(
+                "[bold green]Setup Complete![/bold green]\n\n"
+                f"Server:     {config['MCP_SERVER_NAME']}\n"
+                f"URL:        {config['MCP_PUBLIC_URL']}\n"
+                f"Local:      {config['MCP_HOST']}:{config['MCP_PORT']}\n"
+                f"Auth mode:  {auth_mode_label}"
+                f"{entity_info}\n\n"
+                "[bold]Post-Setup Steps:[/bold]\n\n"
+                "1. Start the gateway:\n"
+                "   [cyan]uavcrew start[/cyan]\n\n"
+                f"{auth_step}\n"
+                "3. Register this server on UAVCrew.ai:\n"
+                "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
+                f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
+                f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
+                "   Copy the connection token\n\n"
+                "4. Add the connection token:\n"
+                "   [cyan]uavcrew keys add <token-from-step-3>[/cyan]\n\n"
+                "5. Restart to apply:\n"
+                "   [cyan]uavcrew restart[/cyan]\n\n"
+                "[bold]Commands:[/bold]\n"
+                "  [cyan]uavcrew status[/cyan]    - Check health and configuration\n"
+                "  [cyan]uavcrew start[/cyan]     - Start the service\n"
+                "  [cyan]uavcrew restart[/cyan]   - Restart after config changes",
+                border_style="green",
+            )
+        )
+
+
+def _generate_docker_compose(config: dict) -> str:
+    """Generate docker-compose.yml content from setup config."""
+    port = config.get("MCP_PORT", "8400")
+    return f"""# UAVCrew MCP Gateway — Docker Compose
+# Generated by: uavcrew setup --docker
+#
+# Usage:
+#   docker compose up -d
+#   curl http://localhost:{port}/health
+#
+services:
+  mcp-gateway:
+    image: ghcr.io/uavopsys/uavcrew-mcp-server:latest
+    container_name: mcp-gateway
+    restart: unless-stopped
+    ports:
+      - "{port}:{port}"
+    env_file:
+      - ./config/.env
+    volumes:
+      - ./config/manifest.json:/app/config/manifest.json:ro
+      - ./config/keys:/app/config/keys:ro
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT={port}
+"""
 
 
 def _generate_systemd(env_path: Optional[Path] = None):
