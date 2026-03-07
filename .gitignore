@@ -36,6 +36,7 @@ env/
 .env
 .env.local
 .env.*.local
+envs/*.env
 manifest.json
 PLAN.md
 keys/*_private*.pem

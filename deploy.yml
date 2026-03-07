@@ -1,0 +1,45 @@
+# deploy.yml — Service declaration for infrastructure automation
+# This file is the contract between the app repo and the infra repo.
+# Ansible reads this to generate compose files, Caddy config, and env templates.
+#
+# Port range: 8400-8499
+# Droplet: uavcrew (production), uat (staging)
+
+app:
+  name: uavcrew-mcp-server
+  port_range: [8400, 8499]
+
+services:
+  uavcrew-mcp-server:
+    image: registry.digitalocean.com/uavopsys/uavcrew-mcp-server
+    ports:
+      - host: 8400
+        container: 8400
+        bind: 127.0.0.1
+        description: FastMCP gateway — Streamable HTTP transport
+    domains:
+      - mcp.ayna.com
+    environments:
+      staging:
+        droplet: uat
+        domains:
+          - mcp-uat.ayna.com
+      dev:
+        droplet: uat
+        domains:
+          - mcp-dev.ayna.com
+      production:
+        droplet: uavcrew
+    health:
+      path: /health
+      port: 8400
+    env:
+      defaults:
+        MCP_SERVER_NAME: MCP Gateway
+        MCP_HOST: "0.0.0.0"
+        MCP_PORT: "8400"
+        LOG_LEVEL: INFO
+      optional:
+        - MCP_PUBLIC_URL
+        - CLIENT_API_BASE_URL
+        - MCP_JWT_PUBLIC_KEY_PATH
