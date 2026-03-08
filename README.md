@@ -23,6 +23,23 @@ The gateway runs on **your infrastructure** and translates MCP tool calls into a
 
 ---
 
+## Development
+
+Prerequisites: Docker. The dev Dockerfile uses an editable pip install so volume-mounted source is live.
+
+```bash
+cd /opt/ayna/uavcrew-mcp-server
+make up          # build dev image + start container (gunicorn --reload)
+make logs        # tail logs
+make restart     # restart gateway
+make rebuild     # rebuild image + recreate (after dependency changes)
+make down        # stop
+```
+
+Source code in `src/` is volume-mounted for live reload. Health check: `curl http://localhost:8400/health`.
+
+---
+
 ## Deployment Options
 
 The gateway can be deployed two ways:

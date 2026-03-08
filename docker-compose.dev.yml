@@ -1,0 +1,22 @@
+# Development compose — editable install + volume mounts for live reload.
+# Usage: make up | make down | make restart | make logs
+
+services:
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: mcp-gateway
+    env_file: .env.docker
+    volumes:
+      - ./src:/app/src
+      - ./gunicorn_config.py:/app/gunicorn_config.py
+      - ./manifest.json:/app/manifest.json:ro
+      - ./keys:/app/keys:ro
+    network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8400/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
