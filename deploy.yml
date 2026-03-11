@@ -1,45 +1,61 @@
 # deploy.yml — Service declaration for infrastructure automation
 # This file is the contract between the app repo and the infra repo.
-# Ansible reads this to generate compose files, Caddy config, and env templates.
+# Ansible reads this to generate systemd units, Caddy config, and env templates.
 #
 # Port range: 8400-8499
-# Droplet: uavcrew (production), uat (staging)
+# Deployment: venv + systemd (no Docker)
 
 app:
   name: uavcrew-mcp-server
   port_range: [8400, 8499]
 
-services:
+native_services:
   uavcrew-mcp-server:
-    image: registry.digitalocean.com/uavopsys/uavcrew-mcp-server
+    description: UAVCrew MCP Gateway — FastMCP over Streamable HTTP
+    type: venv
+    python: python3
+    exec: gunicorn --config gunicorn_config.py mcp_server.server:app
+    user: adonis
     ports:
       - host: 8400
-        container: 8400
-        bind: 127.0.0.1
         description: FastMCP gateway — Streamable HTTP transport
     domains:
       - mcp.ayna.com
     environments:
       staging:
-        droplet: uat
         domains:
           - mcp-uat.ayna.com
       dev:
-        droplet: uat
         domains:
           - mcp-dev.ayna.com
-      production:
-        droplet: uavcrew
+      production: {}
     health:
       path: /health
       port: 8400
+      smoke:
+        - method: POST
+          path: /mcp
+          headers:
+            Content-Type: application/json
+            Accept: application/json, text/event-stream
+          body: '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke-test","version":"0.1"}}}'
+          status: [200]
+        - method: POST
+          path: /mcp
+          headers:
+            Content-Type: application/json
+            Accept: application/json, text/event-stream
+          body: '{"jsonrpc":"2.0","method":"tools/list","id":2,"params":{}}'
+          status: [200]
     env:
       defaults:
         MCP_SERVER_NAME: MCP Gateway
-        MCP_HOST: "0.0.0.0"
+        MCP_HOST: "127.0.0.1"
         MCP_PORT: "8400"
         LOG_LEVEL: INFO
       optional:
         - MCP_PUBLIC_URL
         - CLIENT_API_BASE_URL
-        - MCP_JWT_PUBLIC_KEY_PATH
+        - MCP_API_KEY
+        - MCP_API_KEYS
+        - SECRET_KEY

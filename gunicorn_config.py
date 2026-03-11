@@ -13,13 +13,9 @@ timeout = 30
 graceful_timeout = 30
 keepalive = 2
 
-# Logging — Docker containers log to stdout/stderr; host installs log to files
-if os.environ.get("MCP_DOCKER") == "1":
-    accesslog = "-"
-    errorlog = "-"
-else:
-    accesslog = "/var/log/ayna/mcp-gateway/gunicorn-access.log"
-    errorlog = "/var/log/ayna/mcp-gateway/gunicorn-error.log"
+# Logging
+accesslog = "/var/log/ayna/uavcrew-mcp-server/gunicorn-access.log"
+errorlog = "/var/log/ayna/uavcrew-mcp-server/gunicorn-error.log"
 loglevel = "info"
 access_log_format = '%({x-forwarded-for}i)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
 
