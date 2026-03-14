@@ -1,42 +1,27 @@
 # UAVCrew MCP Gateway — Developer Commands
-# Port: 8400
 #
-#   make up        Start MCP gateway (Docker, live reload)
-#   make down      Stop MCP gateway
-#   make restart   Restart MCP gateway
-#   make logs      Tail MCP gateway logs
-#   make build     Build production Docker image (for distribution)
-#   make rebuild   Rebuild dev image + recreate container
+#   make dev       Start gateway in dev mode (gunicorn --reload)
+#   make test      Run tests
+#   make lint      Run linter
 #   make clean     Clean build artifacts
 
-COMPOSE := docker compose -f docker-compose.dev.yml
-IMAGE   := ghcr.io/uavopsys/uavcrew-mcp-server
+.PHONY: dev test lint clean
 
-.PHONY: up down restart logs build rebuild clean
+# --- Dev server (venv, live reload) ---
 
-# --- Docker dev (live reload via volume mount) ---
+dev:
+	venv/bin/gunicorn --config gunicorn_config.py --reload mcp_server.server:app
 
-up:
-	$(COMPOSE) up -d --build
+# --- Tests & linting ---
 
-down:
-	$(COMPOSE) down
+test:
+	venv/bin/pytest tests/ -v
 
-restart:
-	$(COMPOSE) restart mcp-gateway
+lint:
+	venv/bin/ruff check .
 
-logs:
-	$(COMPOSE) logs -f mcp-gateway
-
-rebuild:
-	$(COMPOSE) up -d --build --force-recreate
-
-# --- Production image (for distribution) ---
-
-build:
-	docker build -t $(IMAGE):dev .
+# --- Cleanup ---
 
 clean:
-	$(COMPOSE) down -v 2>/dev/null || true
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache htmlcov .coverage dist/ build/ *.egg-info/

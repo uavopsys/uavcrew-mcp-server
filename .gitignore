@@ -34,7 +34,6 @@ env/
 
 # Environment
 .env
-.env.docker
 .env.local
 .env.*.local
 envs/*.env
@@ -44,9 +43,6 @@ keys/*_private*.pem
 caddy-mcp.conf
 nginx-mcp.conf
 apache-mcp.conf
-
-# Docker setup output (customer-specific config)
-config/
 
 # Database (demo db can be regenerated)
 *.db

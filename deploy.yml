@@ -3,7 +3,7 @@
 # Ansible reads this to generate systemd units, Caddy config, and env templates.
 #
 # Port range: 8400-8499
-# Deployment: venv + systemd (no Docker)
+# Deployment: venv + systemd
 
 app:
   name: uavcrew-mcp-server

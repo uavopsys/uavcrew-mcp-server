@@ -140,9 +140,9 @@ After=network.target
 
 [Service]
 Type=notify
-User={paths['user']}
-Group={paths['user']}
-WorkingDirectory={paths['workdir']}
+User={paths["user"]}
+Group={paths["user"]}
+WorkingDirectory={paths["workdir"]}
 EnvironmentFile={env_path.resolve()}
 Environment="PATH={venv_bin}"
 ExecStart={gunicorn} \\
@@ -158,7 +158,7 @@ TimeoutStopSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={paths['workdir']} {LOG_DIR}
+ReadWritePaths={paths["workdir"]} {LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -296,7 +296,8 @@ def _check_process_running(port: int = 8200) -> dict:
         if f":{port}" in proc.stdout:
             result["running"] = True
             import re
-            match = re.search(r'pid=(\d+)', proc.stdout)
+
+            match = re.search(r"pid=(\d+)", proc.stdout)
             if match:
                 result["pid"] = match.group(1)
             result["method"] = "manual"
@@ -364,6 +365,7 @@ def _check_manifest() -> dict:
 def status():
     """Check MCP gateway status, configuration, and manifest."""
     from . import __version__
+
     console.print(
         Panel.fit(
             f"[bold blue]UAVCrew MCP Gateway[/bold blue] [dim]v{__version__}[/dim]",
@@ -387,37 +389,57 @@ def status():
 
         # Load env vars so manifest loader can find MCP_MANIFEST_PATH
         from dotenv import load_dotenv
+
         load_dotenv(env_path)
 
         # Check API keys
         api_key = env_vars.get("MCP_API_KEY", "")
         api_keys = env_vars.get("MCP_API_KEYS", "")
         if api_key or api_keys:
-            key_count = len([k for k in (api_key + "," + api_keys).split(",") if k.strip()])
-            console.print(f"  [green]\u2713[/green] API key(s) configured ({key_count} key(s))")
+            key_count = len(
+                [k for k in (api_key + "," + api_keys).split(",") if k.strip()]
+            )
+            console.print(
+                f"  [green]\u2713[/green] API key(s) configured ({key_count} key(s))"
+            )
         else:
-            console.print("  [yellow]![/yellow] No API keys configured (server will be open)")
+            console.print(
+                "  [yellow]![/yellow] No API keys configured (server will be open)"
+            )
 
         # Check auth mode from manifest
-        manifest_path = os.environ.get("MCP_MANIFEST_PATH", env_vars.get("MCP_MANIFEST_PATH", "./manifest.json"))
+        manifest_path = os.environ.get(
+            "MCP_MANIFEST_PATH", env_vars.get("MCP_MANIFEST_PATH", "./manifest.json")
+        )
         try:
             import json
+
             with open(manifest_path) as _mf:
                 _manifest_data = json.load(_mf)
             auth = _manifest_data.get("auth", {})
             mode = auth.get("mode", "static")
             if mode == "static":
                 token_env = auth.get("token_env", "CLIENT_API_TOKEN")
-                has_token = bool(os.environ.get(token_env, env_vars.get(token_env, "")).strip())
+                has_token = bool(
+                    os.environ.get(token_env, env_vars.get(token_env, "")).strip()
+                )
                 if has_token:
-                    console.print(f"  [green]\u2713[/green] Token resolution: static ({token_env} configured)")
+                    console.print(
+                        f"  [green]\u2713[/green] Token resolution: static ({token_env} configured)"
+                    )
                 else:
-                    console.print(f"  [yellow]![/yellow] Token resolution: static ({token_env} not set)")
+                    console.print(
+                        f"  [yellow]![/yellow] Token resolution: static ({token_env} not set)"
+                    )
             elif mode == "dynamic":
                 resolver_path = auth.get("resolver_path", "")
-                console.print(f"  [green]\u2713[/green] Token resolution: dynamic (resolver: {resolver_path})")
+                console.print(
+                    f"  [green]\u2713[/green] Token resolution: dynamic (resolver: {resolver_path})"
+                )
         except Exception:
-            console.print("  [dim]-[/dim] Token resolution: unknown (could not read manifest)")
+            console.print(
+                "  [dim]-[/dim] Token resolution: unknown (could not read manifest)"
+            )
 
         port = int(env_vars.get("MCP_PORT", "8200"))
         public_url = env_vars.get("MCP_PUBLIC_URL", "")
@@ -441,8 +463,12 @@ def status():
         all_ok = False
     elif manifest_info["loaded"]:
         console.print(f"  [green]\u2713[/green] Loaded from {manifest_info['path']}")
-        console.print(f"  [green]\u2713[/green] Entities: {manifest_info['entity_count']}")
-        console.print(f"  [green]\u2713[/green] Actions: {manifest_info['action_count']}")
+        console.print(
+            f"  [green]\u2713[/green] Entities: {manifest_info['entity_count']}"
+        )
+        console.print(
+            f"  [green]\u2713[/green] Actions: {manifest_info['action_count']}"
+        )
 
         # Show entity table
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
@@ -450,10 +476,11 @@ def status():
         table.add_column("Actions", style="dim")
 
         from .manifest import load_manifest, get_entity, get_entity_actions
+
         try:
             manifest = load_manifest(manifest_info["path"])
             for name in manifest_info["entities"]:
-                entity_def = get_entity(manifest, name)
+                get_entity(manifest, name)
                 actions = get_entity_actions(manifest, name)
                 action_names = ", ".join(actions.keys()) if actions else "read-only"
                 table.add_row(name, action_names)
@@ -493,7 +520,9 @@ def status():
             if process["workers"]:
                 console.print(f"  [green]\u2713[/green] Workers: {process['workers']}")
         else:
-            console.print(f"  [red]\u2717[/red] Service not running ({systemd['status']})")
+            console.print(
+                f"  [red]\u2717[/red] Service not running ({systemd['status']})"
+            )
             restart_cmd = f"sudo systemctl start {SERVICE_NAME}"
             all_ok = False
     else:
@@ -501,8 +530,12 @@ def status():
 
         if process["running"]:
             pid_info = f"PID: {process['pid'] or 'unknown'}"
-            worker_info = f", {process['workers']} workers" if process["workers"] else ""
-            console.print(f"  [green]\u2713[/green] Server running (manual, {pid_info}{worker_info})")
+            worker_info = (
+                f", {process['workers']} workers" if process["workers"] else ""
+            )
+            console.print(
+                f"  [green]\u2713[/green] Server running (manual, {pid_info}{worker_info})"
+            )
             running = True
             restart_cmd = f"# Kill PID {process['pid']} and restart manually"
         else:
@@ -518,9 +551,11 @@ def status():
         console.print("\n[bold red]Some checks failed.[/bold red]")
 
     if not env_path.exists():
-        console.print(f"  \u2192 Run [cyan]uavcrew setup[/cyan] to configure")
+        console.print("  \u2192 Run [cyan]uavcrew setup[/cyan] to configure")
     elif not systemd["installed"] and not running:
-        console.print(f"  \u2192 Run [cyan]uavcrew generate-systemd[/cyan] to create service")
+        console.print(
+            "  \u2192 Run [cyan]uavcrew generate-systemd[/cyan] to create service"
+        )
     elif not running and restart_cmd:
         console.print(f"  \u2192 Start: [cyan]{restart_cmd}[/cyan]")
 
@@ -561,7 +596,9 @@ def _require_service_installed() -> dict:
     svc = _check_systemd_service()
     if not svc["installed"]:
         console.print("[red]Systemd service not installed.[/red]")
-        console.print("Run [cyan]uavcrew setup[/cyan] or [cyan]uavcrew generate-systemd[/cyan] first.")
+        console.print(
+            "Run [cyan]uavcrew setup[/cyan] or [cyan]uavcrew generate-systemd[/cyan] first."
+        )
         raise typer.Exit(1)
     return svc
 
@@ -585,9 +622,11 @@ def start():
             check=True,
             capture_output=True,
         )
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to start service.[/red]")
-        console.print(f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]")
+    except subprocess.CalledProcessError:
+        console.print("[red]Failed to start service.[/red]")
+        console.print(
+            f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]"
+        )
         raise typer.Exit(1)
 
     port = _get_port()
@@ -600,8 +639,12 @@ def start():
             f"({health.get('entities', '?')} entities{worker_info})"
         )
     else:
-        console.print("[yellow]Service started but health check not responding yet.[/yellow]")
-        console.print(f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]")
+        console.print(
+            "[yellow]Service started but health check not responding yet.[/yellow]"
+        )
+        console.print(
+            f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]"
+        )
 
 
 @app.command()
@@ -620,7 +663,7 @@ def stop():
             check=True,
             capture_output=True,
         )
-        console.print(f"[green]\u2713[/green] Service stopped.")
+        console.print("[green]\u2713[/green] Service stopped.")
     except subprocess.CalledProcessError:
         console.print("[red]Failed to stop service.[/red]")
         raise typer.Exit(1)
@@ -629,7 +672,7 @@ def stop():
 @app.command()
 def restart():
     """Restart the MCP Gateway service."""
-    svc = _require_service_installed()
+    _require_service_installed()
 
     console.print("Restarting MCP Gateway...")
     try:
@@ -640,7 +683,9 @@ def restart():
         )
     except subprocess.CalledProcessError:
         console.print("[red]Failed to restart service.[/red]")
-        console.print(f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]")
+        console.print(
+            f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]"
+        )
         raise typer.Exit(1)
 
     port = _get_port()
@@ -653,8 +698,12 @@ def restart():
             f"({health.get('entities', '?')} entities{worker_info})"
         )
     else:
-        console.print("[yellow]Service restarted but health check not responding yet.[/yellow]")
-        console.print(f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]")
+        console.print(
+            "[yellow]Service restarted but health check not responding yet.[/yellow]"
+        )
+        console.print(
+            f"Check logs: [cyan]sudo journalctl -u {SERVICE_NAME} --no-pager -n 20[/cyan]"
+        )
 
 
 # =============================================================================
@@ -688,7 +737,9 @@ def _get_all_keys(env_vars: dict) -> list[str]:
 def _save_keys(env_path: Path, keys: list[str]) -> None:
     """Save keys back to .env file."""
     if not env_path.exists():
-        console.print("[red]Error: .env file not found. Run 'uavcrew setup' first.[/red]")
+        console.print(
+            "[red]Error: .env file not found. Run 'uavcrew setup' first.[/red]"
+        )
         raise typer.Exit(1)
 
     # Read current file
@@ -766,7 +817,9 @@ def keys_list():
         table.add_row(str(i), _mask_key(key), source)
 
     console.print(table)
-    console.print("\n[dim]Keys are used to authenticate requests from UAVCrew instances.[/dim]")
+    console.print(
+        "\n[dim]Keys are used to authenticate requests from UAVCrew instances.[/dim]"
+    )
 
 
 @keys_app.command("add")
@@ -793,14 +846,15 @@ def keys_add(token: str = typer.Argument(..., help="API token from UAVCrew dashb
     console.print(f"[green]\u2713[/green] Added key: {_mask_key(token)}")
     console.print(f"[dim]Total keys: {len(keys)}[/dim]")
     console.print("\n[yellow]Restart the server to apply:[/yellow]")
-    if Path("docker-compose.yml").exists():
-        console.print("  [cyan]docker compose restart[/cyan]")
-    else:
-        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+    console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
 
 
 @keys_app.command("remove")
-def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to remove (first 8+ chars)")):
+def keys_remove(
+    key_prefix: str = typer.Argument(
+        ..., help="Key or prefix to remove (first 8+ chars)"
+    ),
+):
     """Remove an API key by prefix match."""
     env_path = Path.cwd() / ".env"
 
@@ -840,43 +894,34 @@ def keys_remove(key_prefix: str = typer.Argument(..., help="Key or prefix to rem
 
     if keys:
         console.print("\n[yellow]Restart the server to apply:[/yellow]")
-        if Path("docker-compose.yml").exists():
-            console.print("  [cyan]docker compose restart[/cyan]")
-        else:
-            console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+        console.print(f"  [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
     else:
-        console.print("\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]")
+        console.print(
+            "\n[yellow]Warning: No keys remaining. Server will accept any request.[/yellow]"
+        )
 
 
 @app.command()
-def setup(
-    docker: bool = typer.Option(False, "--docker", help="Generate Docker Compose config instead of systemd"),
-):
+def setup():
     """Interactive setup wizard for UAVCrew MCP Gateway."""
-    mode_label = "Docker" if docker else "Host"
     console.print(
         Panel.fit(
-            f"[bold blue]UAVCrew MCP Gateway Setup[/bold blue] [dim]({mode_label})[/dim]\n\n"
+            "[bold blue]UAVCrew MCP Gateway Setup[/bold blue]\n\n"
             "This wizard will configure your MCP gateway to connect with UAVCrew.ai.\n"
             "The gateway translates entity operations into client API calls.",
             border_style="blue",
         )
     )
 
-    # Docker mode writes config into a config/ subdirectory
-    if docker:
-        config_dir = Path.cwd() / "config"
-        config_dir.mkdir(exist_ok=True)
-        env_path = config_dir / ".env"
-    else:
-        config_dir = None
-        env_path = Path.cwd() / ".env"
+    env_path = Path.cwd() / ".env"
     existing = {}
 
     # Load existing config if available
     if env_path.exists():
         existing = load_env_file(env_path)
-        console.print("\n[yellow]Found existing .env file. Values will be used as defaults.[/yellow]")
+        console.print(
+            "\n[yellow]Found existing .env file. Values will be used as defaults.[/yellow]"
+        )
         if not Confirm.ask("Continue with setup?", default=True):
             console.print("Setup cancelled.", style="yellow")
             raise typer.Exit(0)
@@ -896,7 +941,9 @@ def setup(
     # Server name
     console.print("\n[bold]Server Name[/bold]")
     console.print("  A friendly name to identify this server in the UAVCrew dashboard.")
-    console.print("  Examples: 'NYC Operations MCP', 'Acme Corp Flight Data', 'Production MCP'")
+    console.print(
+        "  Examples: 'NYC Operations MCP', 'Acme Corp Flight Data', 'Production MCP'"
+    )
     config["MCP_SERVER_NAME"] = Prompt.ask(
         "\n  Server name",
         default=existing.get("MCP_SERVER_NAME", "MCP Server"),
@@ -906,8 +953,12 @@ def setup(
     console.print("\n[bold]Public URL[/bold]")
     console.print("  The HTTPS URL where UAVCrew.ai can reach this server.")
     console.print("  This is your domain with HTTPS, NOT the local port.")
-    console.print("  Examples: 'https://mcp.yourcompany.com', 'https://uav-data.example.org'")
-    console.print("\n  [dim]You'll set up the reverse proxy (Caddy/Nginx) in a later step.[/dim]")
+    console.print(
+        "  Examples: 'https://mcp.yourcompany.com', 'https://uav-data.example.org'"
+    )
+    console.print(
+        "\n  [dim]You'll set up the reverse proxy (Caddy/Nginx) in a later step.[/dim]"
+    )
     config["MCP_PUBLIC_URL"] = Prompt.ask(
         "\n  Public URL",
         default=existing.get("MCP_PUBLIC_URL", "https://mcp.example.com"),
@@ -915,14 +966,10 @@ def setup(
 
     # Local binding
     console.print("\n[bold]Local Server Binding[/bold]")
-    if docker:
-        console.print("  The container listens on this host:port internally.")
-        console.print("  Map the port in docker-compose.yml to expose it.")
-    else:
-        console.print("  The MCP gateway listens locally on this host:port.")
-        console.print("  Your reverse proxy (Caddy/Nginx) will forward HTTPS traffic here.")
-    default_host = "0.0.0.0" if docker else "127.0.0.1"
-    default_port = "8400" if docker else "8200"
+    console.print("  The MCP gateway listens locally on this host:port.")
+    console.print("  Your reverse proxy (Caddy/Nginx) will forward HTTPS traffic here.")
+    default_host = "127.0.0.1"
+    default_port = "8400"
     config["MCP_HOST"] = Prompt.ask(
         "  Listen address",
         default=existing.get("MCP_HOST", default_host),
@@ -947,26 +994,23 @@ def setup(
     console.print("\n[bold]Manifest File[/bold]")
     console.print("  Path to manifest.json that defines entities and API paths.")
     console.print("  See manifest.json.example for the reference format.")
-    if docker:
-        default_manifest = "./config/manifest.json"
-    else:
-        default_manifest = "./manifest.json"
     manifest_rel_path = Prompt.ask(
         "\n  Manifest path",
-        default=existing.get("MCP_MANIFEST_PATH", default_manifest),
+        default=existing.get("MCP_MANIFEST_PATH", "./manifest.json"),
     )
-    # In Docker mode, don't write MCP_MANIFEST_PATH to .env — Dockerfile ENV handles it
-    if not docker:
-        config["MCP_MANIFEST_PATH"] = manifest_rel_path
+    config["MCP_MANIFEST_PATH"] = manifest_rel_path
 
     # Validate manifest if it exists
     manifest_path = Path(manifest_rel_path)
     if manifest_path.exists():
         try:
             from .manifest import load_manifest, get_entity_names
+
             manifest = load_manifest(str(manifest_path))
             entity_names = get_entity_names(manifest)
-            console.print(f"  [green]\u2713[/green] Manifest valid ({len(entity_names)} entities: {', '.join(entity_names)})")
+            console.print(
+                f"  [green]\u2713[/green] Manifest valid ({len(entity_names)} entities: {', '.join(entity_names)})"
+            )
         except Exception as e:
             console.print(f"  [red]\u2717[/red] Manifest error: {e}")
             if not Confirm.ask("  Continue anyway?", default=False):
@@ -976,26 +1020,42 @@ def setup(
         if example_path.exists():
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(example_path, manifest_path)
-            console.print(f"  [green]\u2713[/green] Copied manifest.json.example → {manifest_path}")
-            console.print("  [dim]Edit manifest.json to customize entity paths for your API.[/dim]")
+            console.print(
+                f"  [green]\u2713[/green] Copied manifest.json.example → {manifest_path}"
+            )
+            console.print(
+                "  [dim]Edit manifest.json to customize entity paths for your API.[/dim]"
+            )
         else:
-            console.print(f"  [yellow]![/yellow] Manifest not found at {manifest_rel_path}")
-            console.print("  [dim]Create a manifest.json before starting the server.[/dim]")
+            console.print(
+                f"  [yellow]![/yellow] Manifest not found at {manifest_rel_path}"
+            )
+            console.print(
+                "  [dim]Create a manifest.json before starting the server.[/dim]"
+            )
 
     # Client API base URL
     console.print("\n[bold]Client API Base URL[/bold]")
-    console.print("  The base URL of the REST API that the gateway forwards requests to.")
+    console.print(
+        "  The base URL of the REST API that the gateway forwards requests to."
+    )
     console.print("  Entity paths from manifest.json are appended to this URL.")
-    console.print("  Examples: 'https://app.example.com/api/v1', 'http://localhost:8000/api/v1'")
+    console.print(
+        "  Examples: 'https://app.example.com/api/v1', 'http://localhost:8000/api/v1'"
+    )
     config["CLIENT_API_BASE_URL"] = Prompt.ask(
         "\n  Client API base URL",
         default=existing.get("CLIENT_API_BASE_URL", ""),
     )
 
     if config["CLIENT_API_BASE_URL"]:
-        console.print(f"  [green]\u2713[/green] Base URL: {config['CLIENT_API_BASE_URL']}")
+        console.print(
+            f"  [green]\u2713[/green] Base URL: {config['CLIENT_API_BASE_URL']}"
+        )
     else:
-        console.print("  [yellow]![/yellow] No base URL provided - will use api_base_url from manifest.json")
+        console.print(
+            "  [yellow]![/yellow] No base URL provided - will use api_base_url from manifest.json"
+        )
 
     # =========================================================================
     # STEP 3: Client API Authentication
@@ -1015,18 +1075,23 @@ def setup(
     if manifest_path.exists():
         try:
             import json as _json
+
             with open(manifest_path) as _mf:
                 _existing_manifest = _json.load(_mf)
             _existing_auth = _existing_manifest.get("auth", {})
             if _existing_auth.get("mode") == "dynamic":
                 existing_auth_mode = "2"
-                existing_resolver_path = _existing_auth.get("resolver_path", existing_resolver_path)
+                existing_resolver_path = _existing_auth.get(
+                    "resolver_path", existing_resolver_path
+                )
             else:
                 existing_token_env = _existing_auth.get("token_env", existing_token_env)
         except Exception:
             pass
 
-    console.print("\n[bold]How does the gateway authenticate to your client API?[/bold]")
+    console.print(
+        "\n[bold]How does the gateway authenticate to your client API?[/bold]"
+    )
     console.print("  1. Single tenant — one API key for all requests")
     console.print("  2. Multiple tenants — resolve API keys dynamically per tenant")
 
@@ -1043,46 +1108,52 @@ def setup(
             default=existing_token_env,
         )
         auth_config = {"mode": "static", "token_env": token_env}
-        console.print(f"  [green]\u2713[/green] Static auth: set {token_env} in .env with your client API key")
+        console.print(
+            f"  [green]\u2713[/green] Static auth: set {token_env} in .env with your client API key"
+        )
     else:
         resolver_path = Prompt.ask(
             "  Resolver endpoint path",
             default=existing_resolver_path,
         )
         auth_config = {"mode": "dynamic", "resolver_path": resolver_path}
-        console.print(f"  [green]\u2713[/green] Dynamic auth: gateway will call {{api_base_url}}{resolver_path}")
-        console.print("  [dim]Your client API must expose this endpoint and validate T1 JWTs.[/dim]")
+        console.print(
+            f"  [green]\u2713[/green] Dynamic auth: gateway will call {{api_base_url}}{resolver_path}"
+        )
+        console.print(
+            "  [dim]Your client API must expose this endpoint and validate T1 JWTs.[/dim]"
+        )
 
     # Write auth config to manifest
     if manifest_path.exists():
         try:
             import json as _json
+
             with open(manifest_path) as _mf:
                 manifest_data = _json.load(_mf)
             manifest_data["auth"] = auth_config
             with open(manifest_path, "w") as _mf:
                 _json.dump(manifest_data, _mf, indent=2)
                 _mf.write("\n")
-            console.print(f"  [green]\u2713[/green] Auth config saved to {manifest_path}")
+            console.print(
+                f"  [green]\u2713[/green] Auth config saved to {manifest_path}"
+            )
         except Exception as e:
             console.print(f"  [yellow]![/yellow] Could not update manifest: {e}")
-            console.print("  [dim]Add the auth section to manifest.json manually.[/dim]")
+            console.print(
+                "  [dim]Add the auth section to manifest.json manually.[/dim]"
+            )
     else:
-        console.print(f"  [yellow]![/yellow] Manifest not found — add auth config when you create it")
+        console.print(
+            "  [yellow]![/yellow] Manifest not found — add auth config when you create it"
+        )
 
     # =========================================================================
     # Auto-detect K3 public key
     # =========================================================================
     # K3 ships with the MCP server in keys/k3_public.pem
     k3_path = Path.cwd() / "keys" / "k3_public.pem"
-    if docker and k3_path.exists():
-        # Copy K3 key into config/keys/ for Docker volume mount
-        k3_dest = config_dir / "keys" / "k3_public.pem"
-        k3_dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(k3_path, k3_dest)
-        console.print(f"\n  [green]\u2713[/green] K3 public key copied to {k3_dest}")
-        # Don't write MCP_JWT_PUBLIC_KEY_PATH to .env — Dockerfile ENV handles it
-    elif k3_path.exists():
+    if k3_path.exists():
         config["MCP_JWT_PUBLIC_KEY_PATH"] = str(k3_path)
         console.print(f"\n  [green]\u2713[/green] K3 public key: {k3_path}")
     elif existing.get("MCP_JWT_PUBLIC_KEY_PATH"):
@@ -1098,139 +1169,147 @@ def setup(
     write_env_file(env_path, config)
     console.print(f"\n  [green]\u2713[/green] Configuration saved to {env_path}")
 
-    if docker:
-        # =================================================================
-        # STEP 5: Docker Compose (replaces reverse proxy + systemd)
-        # =================================================================
-        console.print("\n" + "=" * 60)
-        console.print("[bold cyan]STEP 5: Docker Compose[/bold cyan]")
-        console.print("=" * 60)
-        console.print(
-            "\nDocker handles service management. Your reverse proxy\n"
-            f"should forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}."
-        )
+    # =========================================================================
+    # STEP 5: Reverse Proxy Setup
+    # =========================================================================
+    console.print("\n" + "=" * 60)
+    console.print("[bold cyan]STEP 5: Reverse Proxy Setup[/bold cyan]")
+    console.print("=" * 60)
+    console.print(
+        "\nA reverse proxy handles HTTPS and forwards requests to the MCP gateway.\n"
+        "This makes your server accessible at your public URL with SSL encryption."
+    )
 
-        compose_path = Path.cwd() / "docker-compose.yml"
-        compose_content = _generate_docker_compose(config)
+    console.print("\n[bold]What reverse proxy do you use?[/bold]")
+    console.print("  1. Caddy [green](recommended - automatic HTTPS)[/green]")
+    console.print("  2. Nginx")
+    console.print("  3. Apache")
+    console.print("  4. None / I'll configure it myself")
 
-        if compose_path.exists():
-            console.print(f"\n  [yellow]![/yellow] docker-compose.yml already exists")
-            if Confirm.ask("  Overwrite?", default=False):
-                with open(compose_path, "w") as f:
-                    f.write(compose_content)
-                console.print(f"  [green]\u2713[/green] docker-compose.yml updated")
-            else:
-                console.print("  [dim]Keeping existing docker-compose.yml[/dim]")
+    proxy_choice = Prompt.ask(
+        "\n  Select option",
+        choices=["1", "2", "3", "4"],
+        default="1",
+    )
+
+    # Extract domain from public URL
+    domain = (
+        config["MCP_PUBLIC_URL"]
+        .replace("https://", "")
+        .replace("http://", "")
+        .rstrip("/")
+    )
+
+    proxy_configs = {
+        "1": ("caddy-mcp.conf", generate_caddy_config, "Add to /etc/caddy/Caddyfile"),
+        "2": (
+            "nginx-mcp.conf",
+            generate_nginx_config,
+            f"/etc/nginx/sites-available/{domain}",
+        ),
+        "3": (
+            "apache-mcp.conf",
+            generate_apache_config,
+            f"/etc/apache2/sites-available/{domain}.conf",
+        ),
+    }
+
+    if proxy_choice in proxy_configs:
+        filename, generator, panel_title = proxy_configs[proxy_choice]
+        config_file = Path(filename)
+
+        proxy_config = generator(domain)
+
+        if (
+            config_file.exists()
+            and config_file.read_text().strip() == proxy_config.strip()
+        ):
+            console.print(
+                f"\n  [green]\u2713[/green] {filename} already configured for {domain}"
+            )
         else:
-            with open(compose_path, "w") as f:
-                f.write(compose_content)
-            console.print(f"\n  [green]\u2713[/green] docker-compose.yml created")
+            console.print("\n[bold]Configuration:[/bold]")
+            console.print(Panel(proxy_config, title=panel_title))
+
+            if proxy_choice == "1":
+                console.print("\n[bold]To apply:[/bold]")
+                console.print("  1. Add the above to your Caddyfile")
+                console.print("  2. Run: [cyan]sudo systemctl reload caddy[/cyan]")
+                console.print(
+                    "\n  Caddy will automatically obtain and renew SSL certificates."
+                )
+            elif proxy_choice == "2":
+                console.print("\n[bold]To apply:[/bold]")
+                console.print(f"  1. Save to /etc/nginx/sites-available/{domain}")
+                console.print(
+                    f"  2. Run: [cyan]sudo ln -s /etc/nginx/sites-available/{domain} /etc/nginx/sites-enabled/[/cyan]"
+                )
+                console.print(
+                    f"  3. Get SSL cert: [cyan]sudo certbot --nginx -d {domain}[/cyan]"
+                )
+                console.print("  4. Run: [cyan]sudo systemctl reload nginx[/cyan]")
+            elif proxy_choice == "3":
+                console.print("\n[bold]To apply:[/bold]")
+                console.print(
+                    "  1. Enable required modules: [cyan]sudo a2enmod proxy proxy_http ssl[/cyan]"
+                )
+                console.print(
+                    f"  2. Save to /etc/apache2/sites-available/{domain}.conf"
+                )
+                console.print(f"  3. Run: [cyan]sudo a2ensite {domain}[/cyan]")
+                console.print(
+                    f"  4. Get SSL cert: [cyan]sudo certbot --apache -d {domain}[/cyan]"
+                )
+                console.print("  5. Run: [cyan]sudo systemctl reload apache2[/cyan]")
+
+            if Confirm.ask(f"\n  Save config to ./{filename}?", default=True):
+                with open(filename, "w") as f:
+                    f.write(proxy_config)
+                console.print(f"  [green]\u2713[/green] Saved to ./{filename}")
 
     else:
-        # =================================================================
-        # STEP 5: Reverse Proxy Setup (host mode)
-        # =================================================================
-        console.print("\n" + "=" * 60)
-        console.print("[bold cyan]STEP 5: Reverse Proxy Setup[/bold cyan]")
-        console.print("=" * 60)
+        console.print("\n  Skipping reverse proxy configuration.")
         console.print(
-            "\nA reverse proxy handles HTTPS and forwards requests to the MCP gateway.\n"
-            "This makes your server accessible at your public URL with SSL encryption."
+            f"  Make sure to configure your proxy to forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}"
         )
 
-        console.print("\n[bold]What reverse proxy do you use?[/bold]")
-        console.print("  1. Caddy [green](recommended - automatic HTTPS)[/green]")
-        console.print("  2. Nginx")
-        console.print("  3. Apache")
-        console.print("  4. None / I'll configure it myself")
+    # =========================================================================
+    # STEP 6: Systemd Service
+    # =========================================================================
+    console.print("\n" + "=" * 60)
+    console.print("[bold cyan]STEP 6: Systemd Service[/bold cyan]")
+    console.print("=" * 60)
+    console.print(
+        "\nA systemd service keeps the MCP gateway running and starts it on boot."
+    )
 
-        proxy_choice = Prompt.ask(
-            "\n  Select option",
-            choices=["1", "2", "3", "4"],
-            default="1",
-        )
+    service_file = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
+    if service_file.exists():
+        paths = detect_paths()
+        expected = generate_systemd_unit(paths, env_path)
+        try:
+            installed = service_file.read_text()
+        except PermissionError:
+            proc = subprocess.run(
+                ["sudo", "cat", str(service_file)],
+                capture_output=True,
+                text=True,
+            )
+            installed = proc.stdout
 
-        # Extract domain from public URL
-        domain = config["MCP_PUBLIC_URL"].replace("https://", "").replace("http://", "").rstrip("/")
-
-        proxy_configs = {
-            "1": ("caddy-mcp.conf", generate_caddy_config, "Add to /etc/caddy/Caddyfile"),
-            "2": ("nginx-mcp.conf", generate_nginx_config, f"/etc/nginx/sites-available/{domain}"),
-            "3": ("apache-mcp.conf", generate_apache_config, f"/etc/apache2/sites-available/{domain}.conf"),
-        }
-
-        if proxy_choice in proxy_configs:
-            filename, generator, panel_title = proxy_configs[proxy_choice]
-            config_file = Path(filename)
-
-            proxy_config = generator(domain)
-
-            if config_file.exists() and config_file.read_text().strip() == proxy_config.strip():
-                console.print(f"\n  [green]\u2713[/green] {filename} already configured for {domain}")
-            else:
-                console.print(f"\n[bold]Configuration:[/bold]")
-                console.print(Panel(proxy_config, title=panel_title))
-
-                if proxy_choice == "1":
-                    console.print("\n[bold]To apply:[/bold]")
-                    console.print("  1. Add the above to your Caddyfile")
-                    console.print("  2. Run: [cyan]sudo systemctl reload caddy[/cyan]")
-                    console.print("\n  Caddy will automatically obtain and renew SSL certificates.")
-                elif proxy_choice == "2":
-                    console.print("\n[bold]To apply:[/bold]")
-                    console.print(f"  1. Save to /etc/nginx/sites-available/{domain}")
-                    console.print(f"  2. Run: [cyan]sudo ln -s /etc/nginx/sites-available/{domain} /etc/nginx/sites-enabled/[/cyan]")
-                    console.print(f"  3. Get SSL cert: [cyan]sudo certbot --nginx -d {domain}[/cyan]")
-                    console.print("  4. Run: [cyan]sudo systemctl reload nginx[/cyan]")
-                elif proxy_choice == "3":
-                    console.print("\n[bold]To apply:[/bold]")
-                    console.print("  1. Enable required modules: [cyan]sudo a2enmod proxy proxy_http ssl[/cyan]")
-                    console.print(f"  2. Save to /etc/apache2/sites-available/{domain}.conf")
-                    console.print(f"  3. Run: [cyan]sudo a2ensite {domain}[/cyan]")
-                    console.print(f"  4. Get SSL cert: [cyan]sudo certbot --apache -d {domain}[/cyan]")
-                    console.print("  5. Run: [cyan]sudo systemctl reload apache2[/cyan]")
-
-                if Confirm.ask(f"\n  Save config to ./{filename}?", default=True):
-                    with open(filename, "w") as f:
-                        f.write(proxy_config)
-                    console.print(f"  [green]\u2713[/green] Saved to ./{filename}")
-
+        if installed.strip() == expected.strip():
+            console.print(
+                "\n  [green]\u2713[/green] Systemd service already installed and up to date"
+            )
         else:
-            console.print("\n  Skipping reverse proxy configuration.")
-            console.print(f"  Make sure to configure your proxy to forward {config['MCP_PUBLIC_URL']} to localhost:{config['MCP_PORT']}")
-
-        # =================================================================
-        # STEP 6: Systemd Service (host mode only)
-        # =================================================================
-        console.print("\n" + "=" * 60)
-        console.print("[bold cyan]STEP 6: Systemd Service[/bold cyan]")
-        console.print("=" * 60)
-        console.print(
-            "\nA systemd service keeps the MCP gateway running and starts it on boot."
-        )
-
-        service_file = Path(f"/etc/systemd/system/{SERVICE_NAME}.service")
-        if service_file.exists():
-            paths = detect_paths()
-            expected = generate_systemd_unit(paths, env_path)
-            try:
-                installed = service_file.read_text()
-            except PermissionError:
-                proc = subprocess.run(
-                    ["sudo", "cat", str(service_file)],
-                    capture_output=True, text=True,
-                )
-                installed = proc.stdout
-
-            if installed.strip() == expected.strip():
-                console.print(f"\n  [green]\u2713[/green] Systemd service already installed and up to date")
-            else:
-                console.print(f"\n  [yellow]![/yellow] Systemd service exists but config has changed")
-                if Confirm.ask("  Regenerate and reinstall?", default=True):
-                    _generate_systemd(env_path)
-        else:
-            if Confirm.ask("\n  Generate and install systemd service?", default=True):
+            console.print(
+                "\n  [yellow]![/yellow] Systemd service exists but config has changed"
+            )
+            if Confirm.ask("  Regenerate and reinstall?", default=True):
                 _generate_systemd(env_path)
+    else:
+        if Confirm.ask("\n  Generate and install systemd service?", default=True):
+            _generate_systemd(env_path)
 
     # =========================================================================
     # DONE
@@ -1242,8 +1321,11 @@ def setup(
     if manifest_path.exists():
         try:
             from .manifest import load_manifest, get_entity_names
+
             m = load_manifest(str(manifest_path))
-            entity_info = f"\nEntities: {len(get_entity_names(m))} (from {manifest_rel_path})"
+            entity_info = (
+                f"\nEntities: {len(get_entity_names(m))} (from {manifest_rel_path})"
+            )
         except Exception:
             pass
 
@@ -1251,9 +1333,8 @@ def setup(
     auth_mode_label = auth_config.get("mode", "static")
     if auth_mode_label == "static":
         token_env = auth_config.get("token_env", "CLIENT_API_TOKEN")
-        env_file_label = "config/.env" if docker else ".env"
         auth_step = (
-            f"2. Set your client API key in {env_file_label}:\n"
+            f"2. Set your client API key in .env:\n"
             f"   [cyan]{token_env}=<your-api-key>[/cyan]\n"
         )
     else:
@@ -1264,93 +1345,34 @@ def setup(
             f"   The gateway calls this with T1 JWT to get K4 per tenant.\n"
         )
 
-    if docker:
-        console.print(
-            Panel.fit(
-                "[bold green]Setup Complete![/bold green]\n\n"
-                f"Server:     {config['MCP_SERVER_NAME']}\n"
-                f"URL:        {config['MCP_PUBLIC_URL']}\n"
-                f"Port:       {config['MCP_PORT']}\n"
-                f"Auth mode:  {auth_mode_label}"
-                f"{entity_info}\n\n"
-                "[bold]Post-Setup Steps:[/bold]\n\n"
-                "1. Start the gateway:\n"
-                "   [cyan]docker compose up -d[/cyan]\n\n"
-                f"{auth_step}\n"
-                "3. Register this server on UAVCrew.ai:\n"
-                "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
-                f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
-                f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
-                "   Copy the connection token\n\n"
-                "4. Add the connection token to config/.env:\n"
-                "   [cyan]MCP_API_KEY=<token-from-step-3>[/cyan]\n\n"
-                "5. Restart to apply:\n"
-                "   [cyan]docker compose restart[/cyan]\n\n"
-                "[bold]Commands:[/bold]\n"
-                "  [cyan]docker compose up -d[/cyan]       - Start the service\n"
-                "  [cyan]docker compose logs -f[/cyan]     - View logs\n"
-                "  [cyan]docker compose restart[/cyan]     - Restart after config changes\n"
-                f"  [cyan]curl http://localhost:{config['MCP_PORT']}/health[/cyan]  - Check health",
-                border_style="green",
-            )
+    console.print(
+        Panel.fit(
+            "[bold green]Setup Complete![/bold green]\n\n"
+            f"Server:     {config['MCP_SERVER_NAME']}\n"
+            f"URL:        {config['MCP_PUBLIC_URL']}\n"
+            f"Local:      {config['MCP_HOST']}:{config['MCP_PORT']}\n"
+            f"Auth mode:  {auth_mode_label}"
+            f"{entity_info}\n\n"
+            "[bold]Post-Setup Steps:[/bold]\n\n"
+            "1. Start the gateway:\n"
+            "   [cyan]uavcrew start[/cyan]\n\n"
+            f"{auth_step}\n"
+            "3. Register this server on UAVCrew.ai:\n"
+            "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
+            f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
+            f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
+            "   Copy the connection token\n\n"
+            "4. Add the connection token:\n"
+            "   [cyan]uavcrew keys add <token-from-step-3>[/cyan]\n\n"
+            "5. Restart to apply:\n"
+            "   [cyan]uavcrew restart[/cyan]\n\n"
+            "[bold]Commands:[/bold]\n"
+            "  [cyan]uavcrew status[/cyan]    - Check health and configuration\n"
+            "  [cyan]uavcrew start[/cyan]     - Start the service\n"
+            "  [cyan]uavcrew restart[/cyan]   - Restart after config changes",
+            border_style="green",
         )
-    else:
-        console.print(
-            Panel.fit(
-                "[bold green]Setup Complete![/bold green]\n\n"
-                f"Server:     {config['MCP_SERVER_NAME']}\n"
-                f"URL:        {config['MCP_PUBLIC_URL']}\n"
-                f"Local:      {config['MCP_HOST']}:{config['MCP_PORT']}\n"
-                f"Auth mode:  {auth_mode_label}"
-                f"{entity_info}\n\n"
-                "[bold]Post-Setup Steps:[/bold]\n\n"
-                "1. Start the gateway:\n"
-                "   [cyan]uavcrew start[/cyan]\n\n"
-                f"{auth_step}\n"
-                "3. Register this server on UAVCrew.ai:\n"
-                "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
-                f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
-                f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
-                "   Copy the connection token\n\n"
-                "4. Add the connection token:\n"
-                "   [cyan]uavcrew keys add <token-from-step-3>[/cyan]\n\n"
-                "5. Restart to apply:\n"
-                "   [cyan]uavcrew restart[/cyan]\n\n"
-                "[bold]Commands:[/bold]\n"
-                "  [cyan]uavcrew status[/cyan]    - Check health and configuration\n"
-                "  [cyan]uavcrew start[/cyan]     - Start the service\n"
-                "  [cyan]uavcrew restart[/cyan]   - Restart after config changes",
-                border_style="green",
-            )
-        )
-
-
-def _generate_docker_compose(config: dict) -> str:
-    """Generate docker-compose.yml content from setup config."""
-    port = config.get("MCP_PORT", "8400")
-    return f"""# UAVCrew MCP Gateway — Docker Compose
-# Generated by: uavcrew setup --docker
-#
-# Usage:
-#   docker compose up -d
-#   curl http://localhost:{port}/health
-#
-services:
-  mcp-gateway:
-    image: ghcr.io/uavopsys/uavcrew-mcp-server:latest
-    container_name: mcp-gateway
-    restart: unless-stopped
-    ports:
-      - "{port}:{port}"
-    env_file:
-      - ./config/.env
-    volumes:
-      - ./config/manifest.json:/app/config/manifest.json:ro
-      - ./config/keys:/app/config/keys:ro
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT={port}
-"""
+    )
 
 
 def _generate_systemd(env_path: Optional[Path] = None):
@@ -1380,16 +1402,20 @@ def _generate_systemd(env_path: Optional[Path] = None):
         try:
             subprocess.run(
                 ["sudo", "mkdir", "-p", LOG_DIR],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
             subprocess.run(
                 ["sudo", "chown", f"{paths['user']}:{paths['user']}", LOG_DIR],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
-            console.print(f"  [green]\u2713[/green] Log directory created")
+            console.print("  [green]\u2713[/green] Log directory created")
         except subprocess.CalledProcessError:
-            console.print(f"  [yellow]![/yellow] Could not create log directory")
-            console.print(f"  Run manually: [cyan]sudo mkdir -p {LOG_DIR} && sudo chown {paths['user']}:{paths['user']} {LOG_DIR}[/cyan]")
+            console.print("  [yellow]![/yellow] Could not create log directory")
+            console.print(
+                f"  Run manually: [cyan]sudo mkdir -p {LOG_DIR} && sudo chown {paths['user']}:{paths['user']} {LOG_DIR}[/cyan]"
+            )
     else:
         console.print(f"\n  [green]\u2713[/green] Log directory exists: {LOG_DIR}")
 
@@ -1422,7 +1448,9 @@ def _generate_systemd(env_path: Optional[Path] = None):
                 capture_output=True,
             )
             if proc.returncode != 0:
-                console.print("  [red]\u2717[/red] Failed to write systemd unit file", style="red")
+                console.print(
+                    "  [red]\u2717[/red] Failed to write systemd unit file", style="red"
+                )
                 console.print("  Try option 2 to save locally, then install manually.")
                 return
 
@@ -1430,7 +1458,9 @@ def _generate_systemd(env_path: Optional[Path] = None):
 
         # Reload systemd
         try:
-            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True, capture_output=True)
+            subprocess.run(
+                ["sudo", "systemctl", "daemon-reload"], check=True, capture_output=True
+            )
             console.print("  [green]\u2713[/green] Reloaded systemd")
         except subprocess.CalledProcessError:
             console.print("  [yellow]![/yellow] Could not reload systemd")
@@ -1453,10 +1483,12 @@ def _generate_systemd(env_path: Optional[Path] = None):
                     check=True,
                     capture_output=True,
                 )
-                console.print(f"  [green]\u2713[/green] Service restarted")
+                console.print("  [green]\u2713[/green] Service restarted")
             except subprocess.CalledProcessError:
-                console.print(f"  [yellow]![/yellow] Could not restart service")
-                console.print(f"  Run manually: [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]")
+                console.print("  [yellow]![/yellow] Could not restart service")
+                console.print(
+                    f"  Run manually: [cyan]sudo systemctl restart {SERVICE_NAME}[/cyan]"
+                )
 
     elif action == "2":
         output_path = Path.cwd() / "mcp-server.service"
