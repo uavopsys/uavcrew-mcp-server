@@ -22,7 +22,7 @@ native_services:
     domains:
       - mcp.ayna.com
     environments:
-      staging:
+      uat:
         domains:
           - mcp-uat.ayna.com
       dev:
