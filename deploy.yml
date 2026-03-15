@@ -58,4 +58,3 @@ native_services:
         - CLIENT_API_BASE_URL
         - MCP_API_KEY
         - MCP_API_KEYS
-        - SECRET_KEY
