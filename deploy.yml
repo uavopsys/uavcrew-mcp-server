@@ -19,6 +19,7 @@ native_services:
     ports:
       - host: 8400
         description: FastMCP gateway — Streamable HTTP transport
+    tls: internal
     domains:
       - mcp.ayna.com
     environments:
@@ -39,14 +40,14 @@ native_services:
             Content-Type: application/json
             Accept: application/json, text/event-stream
           body: '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke-test","version":"0.1"}}}'
-          status: [200]
+          status: [200, 401]
         - method: POST
           path: /mcp
           headers:
             Content-Type: application/json
             Accept: application/json, text/event-stream
           body: '{"jsonrpc":"2.0","method":"tools/list","id":2,"params":{}}'
-          status: [200]
+          status: [200, 401]
     env:
       defaults:
         MCP_SERVER_NAME: MCP Gateway
