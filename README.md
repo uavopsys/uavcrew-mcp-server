@@ -75,19 +75,11 @@ Expected response:
 ### 4. Register on UAVCrew
 
 1. Go to [UAVCrew Dashboard → MCP Servers](https://www.uavcrew.ai/dashboard/mcp/)
-2. Add your server name and public URL
-3. Copy the connection token
-4. Add it:
+2. Add your server name, public URL, and connection type
+3. For single-tenant: set `CLIENT_API_TOKEN` in `.env` and restart
 
-   ```bash
-   uavcrew keys add <token-from-dashboard>
-   ```
-
-5. Restart:
-
-   ```bash
-   uavcrew restart
-   ```
+UAVCrew connects using T1 delegation JWTs validated by the K3 public key
+(shipped with this repo in `keys/k3_public.pem`). No manual token exchange needed.
 
 ---
 
@@ -153,14 +145,13 @@ Source changes are live with `--reload`. Health check: `curl http://localhost:84
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MCP_API_KEY` | Yes (prod) | — | API key for authenticating requests from UAVCrew |
+| `MCP_JWT_PUBLIC_KEY_PATH` | Yes | `keys/k3_public.pem` | Path to K3 public key for validating T1 JWTs |
 | `CLIENT_API_BASE_URL` | No | from manifest | Base URL of your REST API |
 | `MCP_HOST` | No | `127.0.0.1` | Server bind address |
 | `MCP_PORT` | No | `8400` | Server port |
 | `MCP_SERVER_NAME` | No | `MCP Gateway` | Friendly name for UAVCrew dashboard |
 | `MCP_PUBLIC_URL` | No | — | HTTPS URL where UAVCrew connects |
-| `MCP_JWT_PUBLIC_KEY_PATH` | No | — | Path to K3 public key for JWT auth |
-| `CLIENT_API_TOKEN` | No | — | Client API token (K4) for static auth mode |
+| `CLIENT_API_TOKEN` | No | — | Client API token (K4) for single-tenant static mode |
 | `LOG_LEVEL` | No | `INFO` | Log level: DEBUG, INFO, WARNING, ERROR |
 
 See [.env.example](.env.example) for a full template with auth mode documentation.
@@ -219,7 +210,7 @@ UAVCrew sends T1 delegation JWTs signed with RS256. The gateway validates using 
 }
 ```
 
-A single API key is used for all requests. Set `CLIENT_API_TOKEN` in `.env` with your client API key, and `MCP_API_KEY` with the token from the UAVCrew dashboard.
+A single API token (K4) is used for all requests to your client API. Set `CLIENT_API_TOKEN` in `.env`. UAVCrew authenticates via T1 JWTs (validated with K3), same as dynamic mode.
 
 ---
 

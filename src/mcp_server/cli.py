@@ -1158,6 +1158,26 @@ def setup():
         console.print(f"\n  [green]\u2713[/green] K3 public key: {k3_path}")
     elif existing.get("MCP_JWT_PUBLIC_KEY_PATH"):
         config["MCP_JWT_PUBLIC_KEY_PATH"] = existing["MCP_JWT_PUBLIC_KEY_PATH"]
+        k3_existing = Path(existing["MCP_JWT_PUBLIC_KEY_PATH"])
+        if k3_existing.exists():
+            console.print(
+                f"\n  [green]\u2713[/green] K3 public key (existing config): {k3_existing}"
+            )
+        else:
+            console.print(
+                f"\n  [yellow]![/yellow] K3 configured but file missing: {k3_existing}"
+            )
+    else:
+        console.print(
+            "\n  [red]\u2717[/red] K3 public key not found at ./keys/k3_public.pem"
+        )
+        console.print(
+            "  [yellow]Without K3, the server cannot validate T1 JWTs.[/yellow]"
+        )
+        console.print(
+            "  [dim]K3 ships with the repo \u2014 re-clone or copy k3_public.pem"
+            " into ./keys/[/dim]"
+        )
 
     # =========================================================================
     # STEP 4: Save Configuration
@@ -1329,20 +1349,37 @@ def setup():
         except Exception:
             pass
 
-    # Auth-mode-specific instructions
+    # Auth-mode-specific post-setup instructions
     auth_mode_label = auth_config.get("mode", "static")
     if auth_mode_label == "static":
         token_env = auth_config.get("token_env", "CLIENT_API_TOKEN")
-        auth_step = (
-            f"2. Set your client API key in .env:\n"
-            f"   [cyan]{token_env}=<your-api-key>[/cyan]\n"
+        post_steps = (
+            "1. Start the gateway:\n"
+            "   [cyan]uavcrew start[/cyan]\n\n"
+            "2. Register this server on UAVCrew.ai:\n"
+            "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
+            f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
+            f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
+            "   Select:     [cyan]Single-tenant (static token)[/cyan]\n\n"
+            f"3. Set your client API token in .env:\n"
+            f"   [cyan]{token_env}=<your-api-key>[/cyan]\n\n"
+            "4. Restart to apply:\n"
+            "   [cyan]uavcrew restart[/cyan]"
         )
     else:
         resolver_path = auth_config.get("resolver_path", "/internal/mcp/resolve-token")
-        auth_step = (
-            f"2. Ensure your client API exposes the resolver:\n"
+        post_steps = (
+            "1. Start the gateway:\n"
+            "   [cyan]uavcrew start[/cyan]\n\n"
+            "2. Ensure your client API exposes the resolver:\n"
             f"   [cyan]POST {{api_base_url}}{resolver_path}[/cyan]\n"
-            f"   The gateway calls this with T1 JWT to get K4 per tenant.\n"
+            "   The gateway calls this with T1 JWT to get K4 per tenant.\n\n"
+            "3. Register this server on UAVCrew.ai:\n"
+            "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
+            f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
+            f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
+            "   Select:     [cyan]Multi-tenant (dynamic resolver)[/cyan]\n\n"
+            "   UAVCrew will connect using T1 JWTs validated with K3."
         )
 
     console.print(
@@ -1354,18 +1391,7 @@ def setup():
             f"Auth mode:  {auth_mode_label}"
             f"{entity_info}\n\n"
             "[bold]Post-Setup Steps:[/bold]\n\n"
-            "1. Start the gateway:\n"
-            "   [cyan]uavcrew start[/cyan]\n\n"
-            f"{auth_step}\n"
-            "3. Register this server on UAVCrew.ai:\n"
-            "   [link]https://www.uavcrew.ai/dashboard/mcp/[/link]\n"
-            f"   Enter name: [cyan]{config['MCP_SERVER_NAME']}[/cyan]\n"
-            f"   Enter URL:  [cyan]{config['MCP_PUBLIC_URL']}[/cyan]\n"
-            "   Copy the connection token\n\n"
-            "4. Add the connection token:\n"
-            "   [cyan]uavcrew keys add <token-from-step-3>[/cyan]\n\n"
-            "5. Restart to apply:\n"
-            "   [cyan]uavcrew restart[/cyan]\n\n"
+            f"{post_steps}\n\n"
             "[bold]Commands:[/bold]\n"
             "  [cyan]uavcrew status[/cyan]    - Check health and configuration\n"
             "  [cyan]uavcrew start[/cyan]     - Start the service\n"
