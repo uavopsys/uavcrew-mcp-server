@@ -181,7 +181,7 @@ async def get_entity_fn(entity: str, id: str | None = None) -> dict[str, Any]:
                 "success": False,
                 "error": f"Entity '{entity}' requires an id parameter.",
             }
-        path = f"{entity_def['path']}/{id}"
+        path = f"{entity_def['path'].rstrip('/')}/{id}"
 
     return await _api_client.get(path, token, extra_headers=_agent_headers())
 
