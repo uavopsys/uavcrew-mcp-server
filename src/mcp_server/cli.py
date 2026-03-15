@@ -168,7 +168,7 @@ WantedBy=multi-user.target
 def generate_caddy_config(domain: str) -> str:
     """Generate Caddyfile configuration."""
     return f"""{domain} {{
-    reverse_proxy localhost:8200
+    reverse_proxy localhost:8400
 }}
 """
 
@@ -194,7 +194,7 @@ server {{
     add_header X-Frame-Options DENY;
 
     location / {{
-        proxy_pass http://127.0.0.1:8200;
+        proxy_pass http://127.0.0.1:8400;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -219,8 +219,8 @@ def generate_apache_config(domain: str) -> str:
     SSLCertificateKeyFile /etc/letsencrypt/live/{domain}/privkey.pem
 
     ProxyPreserveHost On
-    ProxyPass / http://127.0.0.1:8200/
-    ProxyPassReverse / http://127.0.0.1:8200/
+    ProxyPass / http://127.0.0.1:8400/
+    ProxyPassReverse / http://127.0.0.1:8400/
 
     <Location />
         Require all granted
@@ -277,7 +277,7 @@ def _check_systemd_service() -> dict:
     return result
 
 
-def _check_process_running(port: int = 8200) -> dict:
+def _check_process_running(port: int = 8400) -> dict:
     """Check if MCP gateway process is running (non-systemd)."""
     result = {
         "running": False,
@@ -381,7 +381,7 @@ def status():
     # ==========================================================================
     console.print("\n[bold]Configuration:[/bold]")
 
-    port = 8200
+    port = 8400
 
     if env_path.exists():
         console.print("  [green]\u2713[/green] .env file exists")
@@ -441,7 +441,7 @@ def status():
                 "  [dim]-[/dim] Token resolution: unknown (could not read manifest)"
             )
 
-        port = int(env_vars.get("MCP_PORT", "8200"))
+        port = int(env_vars.get("MCP_PORT", "8400"))
         public_url = env_vars.get("MCP_PUBLIC_URL", "")
         if public_url:
             console.print(f"  [dim]Public URL: {public_url}[/dim]")
@@ -570,8 +570,8 @@ def _get_port() -> int:
     env_path = Path.cwd() / ".env"
     if env_path.exists():
         env_vars = load_env_file(env_path)
-        return int(env_vars.get("MCP_PORT", "8200"))
-    return 8200
+        return int(env_vars.get("MCP_PORT", "8400"))
+    return 8400
 
 
 def _wait_healthy(port: int, timeout: int = 5) -> dict | None:

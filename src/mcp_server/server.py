@@ -38,7 +38,7 @@ from . import __version__
 from .api_client import ApiClient
 from .auth import DelegationClaims, load_public_key, validate_delegation_token
 from .manifest import load_manifest, get_entity, get_entity_names, get_entity_actions
-from .token_resolver import ResolveResult, TokenResolver
+from .token_resolver import TokenResolver
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _manifest = load_manifest()
-_api_base_url = os.environ.get("CLIENT_API_BASE_URL", "").strip() or _manifest["api_base_url"]
+_api_base_url = (
+    os.environ.get("CLIENT_API_BASE_URL", "").strip() or _manifest["api_base_url"]
+)
 _api_client = ApiClient(_api_base_url)
 _resolver = TokenResolver(_manifest.get("auth", {}), _api_base_url)
 
@@ -64,9 +66,7 @@ mcp = FastMCP(name="uavcrew-mcp-server")
 _current_claims: ContextVar[DelegationClaims | None] = ContextVar(
     "claims", default=None
 )
-_current_token: ContextVar[str | None] = ContextVar(
-    "token", default=None
-)  # K4
+_current_token: ContextVar[str | None] = ContextVar("token", default=None)  # K4
 _current_t1_jwt: ContextVar[str | None] = ContextVar(
     "t1_jwt", default=None
 )  # Raw T1 JWT for dynamic resolver
@@ -120,6 +120,7 @@ def _check_scope(entity: str, operation: str = "read") -> dict | None:
 # Resource: entities://manifest
 # ---------------------------------------------------------------------------
 
+
 @mcp.resource(
     "entities://manifest",
     name="Entity Manifest",
@@ -134,6 +135,7 @@ def manifest_resource() -> str:
 # ---------------------------------------------------------------------------
 # Tool: get_entity
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(name="get_entity")
 async def get_entity_fn(entity: str, id: str | None = None) -> dict[str, Any]:
@@ -188,6 +190,7 @@ async def get_entity_fn(entity: str, id: str | None = None) -> dict[str, Any]:
 # Tool: list_entities
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool()
 async def list_entities(
     entity: str,
@@ -240,12 +243,15 @@ async def list_entities(
         query["sort"] = sort
 
     path = entity_def["path"]
-    return await _api_client.get(path, token, query=query, extra_headers=_agent_headers())
+    return await _api_client.get(
+        path, token, query=query, extra_headers=_agent_headers()
+    )
 
 
 # ---------------------------------------------------------------------------
 # Tool: search
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 async def search(
@@ -290,15 +296,20 @@ async def search(
         search_params = {"search": query}
         entity_def = get_entity(_manifest, entity)
         path = entity_def["path"]
-        return await _api_client.get(path, token, query=search_params, extra_headers=headers)
+        return await _api_client.get(
+            path, token, query=search_params, extra_headers=headers
+        )
     else:
         # Unified search across all entities
-        return await _api_client.get("/search", token, query={"q": query}, extra_headers=headers)
+        return await _api_client.get(
+            "/search", token, query={"q": query}, extra_headers=headers
+        )
 
 
 # ---------------------------------------------------------------------------
 # Tool: action
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool()
 async def action(
@@ -368,12 +379,15 @@ async def action(
         path = path.replace("{id}", id)
 
     method = action_def["method"]
-    return await _api_client.request(method, path, token, params=params, extra_headers=_agent_headers())
+    return await _api_client.request(
+        method, path, token, params=params, extra_headers=_agent_headers()
+    )
 
 
 # ---------------------------------------------------------------------------
 # Auth middleware
 # ---------------------------------------------------------------------------
+
 
 def _load_api_keys() -> set[str]:
     """Load configured MCP API keys from environment (legacy auth)."""
@@ -533,11 +547,14 @@ app.mount("/", mcp_app)
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def _print_banner(host: str, port: int):
     """Print startup banner."""
     entity_names = get_entity_names(_manifest)
-    auth_mode = "JWT (K3)" if _public_key else (
-        "API key (legacy)" if _legacy_api_keys else "none (dev mode)"
+    auth_mode = (
+        "JWT (K3)"
+        if _public_key
+        else ("API key (legacy)" if _legacy_api_keys else "none (dev mode)")
     )
     token_mode = _manifest.get("auth", {}).get("mode", "static")
     resolver_url = getattr(_resolver, "resolver_url", None)
@@ -549,7 +566,7 @@ def _print_banner(host: str, port: int):
     if resolver_url:
         print(f"  Resolver URL:  {resolver_url}")
     print(f"  Entities ({len(entity_names)}): {', '.join(entity_names)}")
-    print(f"  Tools (4): get_entity, list_entities, search, action\n")
+    print("  Tools (4): get_entity, list_entities, search, action\n")
 
 
 def main():
@@ -558,7 +575,7 @@ def main():
     from pathlib import Path
 
     host = os.environ.get("MCP_HOST", "127.0.0.1")
-    port = int(os.environ.get("MCP_PORT", "8200"))
+    port = int(os.environ.get("MCP_PORT", "8400"))
 
     _print_banner(host, port)
 
@@ -569,7 +586,8 @@ def main():
 
     args = [
         "gunicorn",
-        "--bind", f"{host}:{port}",
+        "--bind",
+        f"{host}:{port}",
         "mcp_server.server:app",
     ]
     if config_path.exists():
@@ -578,6 +596,7 @@ def main():
     sys.argv = args
 
     from gunicorn.app.wsgiapp import WSGIApplication
+
     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]").run()
 
 
@@ -586,7 +605,7 @@ def dev():
     import uvicorn
 
     host = os.environ.get("MCP_HOST", "0.0.0.0")
-    port = int(os.environ.get("MCP_PORT", "8200"))
+    port = int(os.environ.get("MCP_PORT", "8400"))
 
     _print_banner(host, port)
     uvicorn.run(app, host=host, port=port)

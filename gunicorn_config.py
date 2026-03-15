@@ -3,7 +3,9 @@
 import os
 
 # Server socket
-bind = os.environ.get("MCP_HOST", "127.0.0.1") + ":" + os.environ.get("MCP_PORT", "8200")
+bind = (
+    os.environ.get("MCP_HOST", "127.0.0.1") + ":" + os.environ.get("MCP_PORT", "8400")
+)
 backlog = 2048
 
 # Worker processes — ASGI via uvicorn worker
@@ -17,7 +19,9 @@ keepalive = 2
 accesslog = "/var/log/ayna/uavcrew-mcp-server/gunicorn-access.log"
 errorlog = "/var/log/ayna/uavcrew-mcp-server/gunicorn-error.log"
 loglevel = "info"
-access_log_format = '%({x-forwarded-for}i)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+access_log_format = (
+    '%({x-forwarded-for}i)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+)
 
 # Process naming
 proc_name = "mcp-gateway"
