@@ -72,7 +72,41 @@ Expected response:
 }
 ```
 
-### 4. Register on UAVCrew
+### 4. Create a Platform API Key (K0)
+
+Before the MCP Gateway can operate, you need a **Platform API Key** on UAVCrew.
+This key allows your application to manage tenants and provision AI access.
+
+1. Go to your [UAVCrew Dashboard → API Keys](https://www.uavcrew.ai/dashboard/api-keys/)
+2. Create a new API key with `platform:admin` scope
+3. Copy the key — you will need it in your application's configuration
+
+Your application uses this key to call UAVCrew's tenant management API:
+
+```
+POST https://api.uavcrew.ai/v1/tenants
+X-API-Key: uav_YOUR_PLATFORM_KEY
+Content-Type: application/json
+
+{
+  "name": "Your Organization",
+  "external_id": "your-org-uuid"
+}
+```
+
+This creates a tenant in UAVCrew, provisions a per-tenant chat API key (K1),
+and registers the MCP Gateway connection. The K0 platform key must have
+`platform:admin` scope — regular chat keys (`chat:read`, `chat:write`) cannot
+manage tenants.
+
+**Set the platform key in your application's environment:**
+
+| Variable | Value |
+|----------|-------|
+| `UAVCREW_API_URL` | `https://api.uavcrew.ai` (or your UAVCrew instance URL) |
+| `UAVCREW_PLATFORM_API_KEY` | The K0 key you just created |
+
+### 5. Register on UAVCrew
 
 1. Go to [UAVCrew Dashboard → MCP Servers](https://www.uavcrew.ai/dashboard/mcp/)
 2. Add your server name, public URL, and connection type
