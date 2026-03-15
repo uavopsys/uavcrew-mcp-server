@@ -72,20 +72,22 @@ Expected response:
 }
 ```
 
-### 4. Create a Platform API Key (K0)
+### 4. Generate a K0 API Key
 
-Before the MCP Gateway can operate, you need a **Platform API Key** on UAVCrew.
+Before the MCP Gateway can operate, you need a **K0 API Key** on UAVCrew.
 This key allows your application to manage tenants and provision AI access.
+Each K0 key is tied to a specific MCP connector.
 
-1. Go to your [UAVCrew Dashboard → API Keys](https://www.uavcrew.ai/dashboard/api-keys/)
-2. Create a new API key with `platform:admin` scope
-3. Copy the key — you will need it in your application's configuration
+1. Go to your [UAVCrew Dashboard → MCP Gateways](https://www.uavcrew.ai/dashboard/mcp/)
+2. Click on your MCP connector
+3. In the **K0 API Key** card, click **Generate K0**
+4. Copy the key — this is the only time it will be shown
 
 Your application uses this key to call UAVCrew's tenant management API:
 
 ```
 POST https://api.uavcrew.ai/v1/tenants
-X-API-Key: uav_YOUR_PLATFORM_KEY
+X-API-Key: uav_YOUR_K0_KEY
 Content-Type: application/json
 
 {
@@ -94,23 +96,28 @@ Content-Type: application/json
 }
 ```
 
-This creates a tenant in UAVCrew, provisions a per-tenant chat API key (K1),
-and registers the MCP Gateway connection. The K0 platform key must have
-`platform:admin` scope — regular chat keys (`chat:read`, `chat:write`) cannot
-manage tenants.
+This creates a tenant in UAVCrew and provisions a per-tenant chat API key (K1).
+The K0 key has `tenants:write` and `tenants:read` scopes — regular chat keys
+(`chat:read`, `chat:write`) cannot manage tenants.
 
-**Set the platform key in your application's environment:**
+To rotate a K0 key, click **Rotate K0** on the same connector detail page.
+The previous key is revoked immediately.
+
+**Set the K0 key in your application's environment:**
 
 | Variable | Value |
 |----------|-------|
 | `UAVCREW_API_URL` | `https://api.uavcrew.ai` (or your UAVCrew instance URL) |
-| `UAVCREW_PLATFORM_API_KEY` | The K0 key you just created |
+| `UAVCREW_PLATFORM_API_KEY` | The K0 key from your MCP connector |
 
 ### 5. Register on UAVCrew
 
-1. Go to [UAVCrew Dashboard → MCP Servers](https://www.uavcrew.ai/dashboard/mcp/)
-2. Add your server name, public URL, and connection type
-3. For single-tenant: set `CLIENT_API_TOKEN` in `.env` and restart
+1. Go to [UAVCrew Dashboard → MCP Gateways](https://www.uavcrew.ai/dashboard/mcp/)
+2. Click **Register** — enter your server name, public URL, and integration type
+   - **Platform (Multi-tenant)**: Your app serves multiple companies. You manage tenants via the K0 key and resolve per-tenant tokens (K4) dynamically
+   - **Direct (Single company)**: Your app serves one company. Set `CLIENT_API_TOKEN` in `.env`
+3. Copy the connection token and set it as `MCP_API_KEY` in your `.env`
+4. For multi-tenant connectors: generate a K0 key from the connector detail page (step 4 above)
 
 UAVCrew connects using T1 delegation JWTs validated by the K3 public key
 (shipped with this repo in `keys/k3_public.pem`). No manual token exchange needed.
@@ -318,7 +325,7 @@ The setup wizard (`uavcrew setup`) can generate these configs for you.
 ## Security
 
 1. **HTTPS** — Always use a reverse proxy with TLS termination
-2. **API Keys** — Rotate keys regularly via the UAVCrew dashboard
+2. **API Keys** — Rotate K0 keys from the MCP connector detail page on UAVCrew
 3. **Per-Tenant Tokens** — Each tenant gets isolated API credentials (K4)
 4. **Scope Enforcement** — T1 JWTs carry scoped permissions per entity and operation
 5. **Network Isolation** — Bind to 127.0.0.1 behind a reverse proxy
