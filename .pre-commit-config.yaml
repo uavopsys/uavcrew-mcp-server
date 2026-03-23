@@ -6,8 +6,9 @@ repos:
     rev: v0.9.0
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--no-fix]
       - id: ruff-format
+        args: [--check]
 
   - repo: local
     hooks:
