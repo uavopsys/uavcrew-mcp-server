@@ -389,32 +389,10 @@ async def action(
 # ---------------------------------------------------------------------------
 
 
-def _load_api_keys() -> set[str]:
-    """Load configured MCP API keys from environment (legacy auth)."""
-    keys = set()
-
-    single_key = os.environ.get("MCP_API_KEY", "").strip()
-    if single_key:
-        keys.add(single_key)
-
-    multi_keys = os.environ.get("MCP_API_KEYS", "").strip()
-    if multi_keys:
-        for key in multi_keys.split(","):
-            key = key.strip()
-            if key:
-                keys.add(key)
-
-    return keys
-
-
-_legacy_api_keys = _load_api_keys()
-
-
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Validates Bearer token: T1 JWT (new) or static API key (legacy).
+    """Validates Bearer token: T1 JWT using K3.
 
     T1 JWT path: validates with K3, extracts tenant_id, looks up K4.
-    Legacy path: checks against MCP_API_KEY env var, uses CLIENT_API_TOKEN.
     No auth configured: allows all requests (development mode).
     """
 
@@ -425,8 +403,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("authorization", "")
         token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
-        # No auth configured at all — development mode
-        if not _public_key and not _legacy_api_keys:
+        # No auth configured — development mode
+        if not _public_key:
             result = await _resolver.resolve()
             _current_token.set(result.token)
             _current_claims.set(None)
@@ -442,11 +420,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 content={"error": "Missing authorization"},
             )
 
-        # Try T1 JWT first (if K3 is configured and token looks like a JWT)
-        if _public_key and token.count(".") == 2:
+        # T1 JWT validation
+        if token.count(".") == 2:
             claims = validate_delegation_token(token, _public_key)
             if claims:
-                # Resolve K4 for this tenant (static or dynamic)
                 result = await _resolver.resolve(claims.tenant_id, token)
                 if not result.ok:
                     resolver_url = getattr(_resolver, "resolver_url", None)
@@ -476,33 +453,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     _current_claims.set(None)
                     _current_token.set(None)
                     _current_t1_jwt.set(None)
-            else:
-                return JSONResponse(
-                    status_code=401,
-                    content={"error": "Invalid or expired T1 token"},
-                )
-
-        # Legacy: static API key check
-        if _legacy_api_keys and token in _legacy_api_keys:
-            result = await _resolver.resolve()
-            if not result.ok:
-                logger.warning(
-                    "Legacy API key auth: K4 resolution failed (reason=%s). "
-                    "If manifest auth.mode is 'dynamic', legacy API keys cannot "
-                    "resolve K4 — T1 JWT is required for multi-tenant deployments.",
-                    result.reason,
-                )
-            _current_token.set(result.token)
-            _current_claims.set(None)
-            _current_t1_jwt.set(None)
-            try:
-                return await call_next(request)
-            finally:
-                _current_token.set(None)
 
         return JSONResponse(
             status_code=401,
-            content={"error": "Invalid credentials"},
+            content={"error": "Invalid or expired T1 token"},
         )
 
 
@@ -526,7 +480,7 @@ app.add_middleware(AuthMiddleware)
 async def health():
     """Health check endpoint."""
     entity_count = len(get_entity_names(_manifest))
-    auth_mode = "jwt" if _public_key else ("api_key" if _legacy_api_keys else "none")
+    auth_mode = "jwt" if _public_key else "none"
     token_mode = _manifest.get("auth", {}).get("mode", "static")
     resolver_url = getattr(_resolver, "resolver_url", None)
     return {
@@ -551,11 +505,7 @@ app.mount("/", mcp_app)
 def _print_banner(host: str, port: int):
     """Print startup banner."""
     entity_names = get_entity_names(_manifest)
-    auth_mode = (
-        "JWT (K3)"
-        if _public_key
-        else ("API key (legacy)" if _legacy_api_keys else "none (dev mode)")
-    )
+    auth_mode = "JWT (K3)" if _public_key else "none (dev mode)"
     token_mode = _manifest.get("auth", {}).get("mode", "static")
     resolver_url = getattr(_resolver, "resolver_url", None)
     print(f"\nStarting UAVCrew MCP Gateway v{__version__} on {host}:{port}")

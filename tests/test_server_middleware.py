@@ -6,14 +6,10 @@ Tests the full authentication orchestration:
   Error paths: missing auth, invalid JWT, K4 resolution failure
 """
 
-import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
 
 import jwt as pyjwt
 import pytest
-import respx
-import httpx
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
@@ -84,7 +80,6 @@ def _mint_t1(
 
 def _make_app(
     public_key: bytes | None = None,
-    legacy_api_keys: set[str] | None = None,
     resolver_mode: str = "static",
     static_token: str | None = "test-k4",
     resolver_url: str | None = None,
@@ -94,16 +89,14 @@ def _make_app(
     We patch module-level globals in server.py to isolate each test.
     """
     import mcp_server.server as srv
-    from mcp_server.token_resolver import TokenResolver, ResolveResult
+    from mcp_server.token_resolver import TokenResolver
 
     # Save originals
     orig_pk = srv._public_key
-    orig_keys = srv._legacy_api_keys
     orig_resolver = srv._resolver
 
     # Set test values
     srv._public_key = public_key
-    srv._legacy_api_keys = legacy_api_keys or set()
 
     if resolver_mode == "static":
         resolver = TokenResolver.__new__(TokenResolver)
@@ -119,7 +112,6 @@ def _make_app(
 
     def restore():
         srv._public_key = orig_pk
-        srv._legacy_api_keys = orig_keys
         srv._resolver = orig_resolver
 
     return srv.app, restore
@@ -137,7 +129,6 @@ class TestHealthEndpoint:
     async def test_health_skips_auth(self):
         app, restore = _make_app(
             public_key=b"fake-key",
-            legacy_api_keys={"secret"},
         )
         try:
             async with AsyncClient(
@@ -163,7 +154,10 @@ class TestHealthEndpoint:
             ) as client:
                 resp = await client.get("/health")
             data = resp.json()
-            assert data["resolver_url"] == "https://app.ayna.com/api/v1/internal/mcp/resolve-token"
+            assert (
+                data["resolver_url"]
+                == "https://app.ayna.com/api/v1/internal/mcp/resolve-token"
+            )
         finally:
             restore()
 
@@ -180,7 +174,6 @@ class TestDevMode:
     async def test_no_auth_allows_request(self):
         app, restore = _make_app(
             public_key=None,
-            legacy_api_keys=set(),
             static_token="dev-k4",
         )
         try:
@@ -245,7 +238,10 @@ class TestT1JWTAuth:
                     json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
                 )
             assert resp.status_code == 401
-            assert "expired" in resp.json()["error"].lower() or "invalid" in resp.json()["error"].lower()
+            assert (
+                "expired" in resp.json()["error"].lower()
+                or "invalid" in resp.json()["error"].lower()
+            )
         finally:
             restore()
 
@@ -317,86 +313,6 @@ class TestT1JWTAuth:
 
 
 # ---------------------------------------------------------------------------
-# Legacy API key path
-# ---------------------------------------------------------------------------
-
-
-class TestLegacyAPIKeyAuth:
-    """Tests for legacy static API key authentication."""
-
-    @pytest.mark.anyio
-    async def test_valid_legacy_key_with_static_resolver(self):
-        """Valid legacy API key + static K4 → request proceeds."""
-        app, restore = _make_app(
-            legacy_api_keys={"test-api-key"},
-            resolver_mode="static",
-            static_token="static-k4",
-        )
-        try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                resp = await client.get(
-                    "/health",
-                    headers={"Authorization": "Bearer test-api-key"},
-                )
-            assert resp.status_code == 200
-        finally:
-            restore()
-
-    @pytest.mark.anyio
-    async def test_invalid_api_key_returns_401(self):
-        """Unknown API key → 401."""
-        app, restore = _make_app(
-            legacy_api_keys={"real-key"},
-            resolver_mode="static",
-            static_token="k4",
-        )
-        try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                resp = await client.post(
-                    "/mcp",
-                    headers={"Authorization": "Bearer wrong-key"},
-                    json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-                )
-            assert resp.status_code == 401
-        finally:
-            restore()
-
-    @pytest.mark.anyio
-    async def test_legacy_key_with_dynamic_resolver_gets_none_k4(self):
-        """Legacy API key + dynamic resolver = K4 is None (no T1 available).
-
-        This should log a warning about the mode mismatch.
-        Tool calls will fail with 'No API token available'.
-        """
-        app, restore = _make_app(
-            legacy_api_keys={"legacy-key"},
-            resolver_mode="dynamic",
-            resolver_url="https://resolver.test/resolve",
-        )
-        try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                # The request will proceed (legacy key is valid) but K4 will be None.
-                # Health endpoint skips auth so we need a real endpoint.
-                # Since K4 is None, the tool won't have a token.
-                # We can at least verify the request doesn't crash.
-                resp = await client.get(
-                    "/health",
-                    headers={"Authorization": "Bearer legacy-key"},
-                )
-            # Health skips auth, so 200. The real effect is that _current_token is None
-            # and tool calls would fail.
-            assert resp.status_code == 200
-        finally:
-            restore()
-
-
-# ---------------------------------------------------------------------------
 # _agent_headers() unit tests
 # ---------------------------------------------------------------------------
 
@@ -423,7 +339,7 @@ class TestAgentHeaders:
             srv._current_claims.reset(token)
 
     def test_returns_none_when_no_claims(self):
-        """When no T1 claims (legacy mode), _agent_headers returns None."""
+        """When no T1 claims, _agent_headers returns None."""
         import mcp_server.server as srv
 
         token = srv._current_claims.set(None)
