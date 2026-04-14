@@ -6,6 +6,7 @@ See AUTH_DECISION.md for the full key/token reference.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,9 +39,7 @@ def load_public_key(path: str) -> bytes | None:
         return None
 
 
-def validate_delegation_token(
-    token: str, public_key: bytes
-) -> DelegationClaims | None:
+def validate_delegation_token(token: str, public_key: bytes) -> DelegationClaims | None:
     """Validate a T1 delegation JWT and extract claims.
 
     Returns DelegationClaims on success, None on any failure (fail closed).
@@ -50,7 +49,7 @@ def validate_delegation_token(
             token,
             public_key,
             algorithms=["RS256"],
-            issuer="https://api.uavcrew.ai",
+            issuer=os.environ.get("DELEGATION_ISSUER", "https://api.uavcrew.ai"),
             audience="mcp-gateway",
             options={"require": ["exp", "iss", "aud", "sub"]},
         )
