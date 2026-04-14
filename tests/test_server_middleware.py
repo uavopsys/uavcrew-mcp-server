@@ -168,7 +168,7 @@ class TestHealthEndpoint:
 
 
 class TestDevMode:
-    """When neither K3 nor legacy API keys are configured."""
+    """When K3 is not configured — dev mode, no auth required."""
 
     @pytest.mark.anyio
     async def test_no_auth_allows_request(self):

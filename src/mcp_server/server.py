@@ -7,8 +7,7 @@ Architecture:
   Agent → MCP Gateway → Client API (AYNA Comply, etc.)
 
 Authentication:
-  T1 JWT (new): UAVCrew mints T1 signed with K2. Gateway validates with K3.
-  Static API key (legacy): MCP_API_KEY env var. Kept for backward compat.
+  T1 JWT: UAVCrew mints T1 signed with K2. Gateway validates with K3.
   See AUTH_DECISION.md for the full key/token reference.
 
 Tools (4):
