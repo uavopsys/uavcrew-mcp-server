@@ -49,7 +49,7 @@ def validate_delegation_token(token: str, public_key: bytes) -> DelegationClaims
             token,
             public_key,
             algorithms=["RS256"],
-            issuer=os.environ.get("DELEGATION_ISSUER", "https://api.uavcrew.ai"),
+            issuer=os.environ.get("UAVCREW_JWT_ISSUER", "https://api.uavcrew.ai"),
             audience="mcp-gateway",
             options={"require": ["exp", "iss", "aud", "sub"]},
         )
