@@ -517,13 +517,17 @@ async def rule_link_task(
 ) -> dict[str, Any]:
     """Link a checklist task to a rule, marking it as what operationally enforces that rule.
 
+    IMPORTANT: task_id must be the real item ID from the checklist, not a description or label.
+    Always call checklist_read(checklist_id) first to get the actual task IDs before calling
+    this tool. Do not invent or guess task IDs — they are UUIDs assigned when the task was created.
+
     A task can be linked to multiple rules simultaneously.
     After linking, the task appears in rule_coverage under this rule.
 
     Args:
         rule_id: UUID of the rule (or child rule) to link to.
         checklist_id: UUID of the checklist that contains the task.
-        task_id: The task item ID within the checklist (from checklist_read or checklist_add_* response).
+        task_id: The real task item ID from checklist_read response — NOT a description or label.
     """
     token = _resolve_token()
     if not token:
