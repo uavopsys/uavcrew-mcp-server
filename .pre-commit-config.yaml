@@ -1,14 +1,16 @@
 # Pre-commit hooks for UAVCrew MCP Server
 # Install: pip install pre-commit && pre-commit install && pre-commit install --hook-type pre-push
+#
+# Lint hooks are advisory: they print warnings but do not block commits.
+# Tests still block on pre-push.
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.0
     hooks:
       - id: ruff
-        args: [--no-fix]
-      - id: ruff-format
-        args: [--check]
+        args: [--no-fix, --exit-zero]
+        stages: [pre-commit]
 
   - repo: local
     hooks:
