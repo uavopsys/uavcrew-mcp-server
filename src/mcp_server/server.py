@@ -10,11 +10,20 @@ Authentication:
   T1 JWT: UAVCrew mints T1 signed with K2. Gateway validates with K3.
   See AUTH_DECISION.md for the full key/token reference.
 
-Tools (4):
+Tools (4 generic + 16 dedicated):
   get_entity     - Get a single entity record by ID
   list_entities  - List entity records with filtering and pagination
   search         - Search across one or all entity types
   action         - Execute a write action on an entity (create, update, start, etc.)
+
+  Rule tools (7):
+  rule_read, rule_coverage, rule_add_child, rule_update, rule_delete,
+  rule_link_task, rule_unlink_task
+
+  Checklist tools (9):
+  checklist_read, checklist_list, checklist_create, checklist_update,
+  checklist_add_checkbox, checklist_add_system_check, checklist_add_log_entry,
+  checklist_update_task, checklist_remove_task
 
 Resource (1):
   entities://manifest - Entity definitions, paths, and available actions
@@ -380,6 +389,433 @@ async def action(
     method = action_def["method"]
     return await _api_client.request(
         method, path, token, params=params, extra_headers=_agent_headers()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def rule_read(rule_id: str) -> dict[str, Any]:
+    """Read a rule with its policy text, child rules, and per-child linked tasks.
+
+    Use this before creating child rules to check what already exists.
+    Also use it to get the rule's section_number and description (policy text).
+
+    Args:
+        rule_id: UUID of the rule to read.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.get(
+        f"/rules/{rule_id}/", token, extra_headers=_agent_headers()
+    )
+
+
+@mcp.tool()
+async def rule_coverage(rule_id: str) -> dict[str, Any]:
+    """Get all checklist tasks currently satisfying a rule.
+
+    Returns direct_tasks (linked to the rule itself) and child_rule_coverage
+    (one entry per child rule with its linked tasks and is_covered flag).
+    Always call this before making changes to avoid duplicating links.
+
+    Args:
+        rule_id: UUID of the rule.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.get(
+        f"/rules/{rule_id}/coverage/", token, extra_headers=_agent_headers()
+    )
+
+
+@mcp.tool()
+async def rule_add_child(
+    parent_rule_id: str, title: str, text: str = ""
+) -> dict[str, Any]:
+    """Add a child rule under a parent rule.
+
+    Section number is assigned automatically (e.g. parent '1' → children '1.1', '1.2', ...).
+    Only works on organization rules — FAA and manufacturer rules are read-only.
+    Returns the created child rule including its id and section_number.
+
+    Args:
+        parent_rule_id: UUID of the parent rule.
+        title: Short name for this obligation (e.g. 'Pilot currency verification').
+        text: Full policy text for this specific obligation. Sent as 'description' to the API.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.post(
+        f"/rules/{parent_rule_id}/sub-rules/",
+        token,
+        params={"title": title, "description": text},
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def rule_update(
+    rule_id: str,
+    title: str | None = None,
+    text: str | None = None,
+) -> dict[str, Any]:
+    """Update a rule's title or policy text.
+
+    Works for both parent and child rules. At least one of title or text must be provided.
+
+    Args:
+        rule_id: UUID of the rule to update.
+        title: New title (omit to leave unchanged).
+        text: New policy text — sent as 'description' to the API (omit to leave unchanged).
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if text is not None:
+        body["description"] = text
+    if not body:
+        return {"success": False, "error": "Provide at least one of title or text."}
+    return await _api_client.patch(
+        f"/rules/sub-rules/{rule_id}/",
+        token,
+        params=body,
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def rule_delete(rule_id: str) -> dict[str, Any]:
+    """Delete a child rule (soft-delete).
+
+    The rule will no longer appear in the UI or API responses.
+    Only use on child rules — do not delete top-level rules.
+
+    Args:
+        rule_id: UUID of the child rule to delete.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.request(
+        "DELETE", f"/rules/sub-rules/{rule_id}/", token, extra_headers=_agent_headers()
+    )
+
+
+@mcp.tool()
+async def rule_link_task(
+    rule_id: str, checklist_id: str, task_id: str
+) -> dict[str, Any]:
+    """Link a checklist task to a rule, marking it as what operationally enforces that rule.
+
+    A task can be linked to multiple rules simultaneously.
+    After linking, the task appears in rule_coverage under this rule.
+
+    Args:
+        rule_id: UUID of the rule (or child rule) to link to.
+        checklist_id: UUID of the checklist that contains the task.
+        task_id: The task item ID within the checklist (from checklist_read or checklist_add_* response).
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.post(
+        f"/rules/sub-rules/{rule_id}/enforce/",
+        token,
+        params={"checklist_id": checklist_id, "task_id": task_id},
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def rule_unlink_task(
+    rule_id: str, checklist_id: str, task_id: str
+) -> dict[str, Any]:
+    """Remove the link between a checklist task and a rule.
+
+    Args:
+        rule_id: UUID of the rule to unlink from.
+        checklist_id: UUID of the checklist containing the task.
+        task_id: The task item ID to unlink.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.request(
+        "DELETE",
+        f"/rules/sub-rules/{rule_id}/enforce/",
+        token,
+        params={"checklist_id": checklist_id, "task_id": task_id},
+        extra_headers=_agent_headers(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Checklist tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def checklist_read(checklist_id: str) -> dict[str, Any]:
+    """Read a checklist and all its tasks.
+
+    Every task in the response includes a task_id — use it in rule_link_task.
+    Also returns context_tag, entity_type, and auto_attach configuration.
+
+    Args:
+        checklist_id: UUID of the checklist to read.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.get(
+        f"/checklists/templates/{checklist_id}", token, extra_headers=_agent_headers()
+    )
+
+
+@mcp.tool()
+async def checklist_list(
+    entity_type: str | None = None,
+    context_tag: str | None = None,
+) -> dict[str, Any]:
+    """List checklists for the organization, optionally filtered.
+
+    Args:
+        entity_type: Filter by what the checklist applies to — aircraft, pilot, flight, mission, maintenance.
+        context_tag: Filter by when it runs — pre_flight, post_flight, emergency, onboarding.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    query: dict[str, str] = {}
+    if entity_type:
+        query["entity_type"] = entity_type
+    if context_tag:
+        query["context_tag"] = context_tag
+    return await _api_client.get(
+        "/checklists/templates",
+        token,
+        query=query or None,
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def checklist_create(
+    title: str, entity_type: str, context_tag: str
+) -> dict[str, Any]:
+    """Create a new empty checklist. Add tasks to it using checklist_add_* tools.
+
+    Args:
+        title: Human-readable name (e.g. 'Pre-Flight Hardware Check').
+        entity_type: What this checklist applies to — aircraft, pilot, flight, mission, maintenance.
+        context_tag: When it runs — pre_flight, post_flight, emergency, onboarding.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.post(
+        "/checklists/templates/",
+        token,
+        params={
+            "title": title,
+            "applies_to_entity_types": [entity_type],
+            "context_tag": context_tag,
+        },
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def checklist_update(
+    checklist_id: str,
+    title: str | None = None,
+    context_tag: str | None = None,
+) -> dict[str, Any]:
+    """Update a checklist's title or context tag.
+
+    Args:
+        checklist_id: UUID of the checklist to update.
+        title: New title (omit to leave unchanged).
+        context_tag: New context tag (omit to leave unchanged).
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if context_tag is not None:
+        body["context_tag"] = context_tag
+    if not body:
+        return {
+            "success": False,
+            "error": "Provide at least one of title or context_tag.",
+        }
+    return await _api_client.patch(
+        f"/checklists/templates/{checklist_id}",
+        token,
+        params=body,
+        extra_headers=_agent_headers(),
+    )
+
+
+async def _add_checklist_task(
+    checklist_id: str,
+    text: str,
+    source: str,
+    required: bool = True,
+    is_critical: bool = False,
+) -> dict[str, Any]:
+    """Shared implementation for all checklist_add_* tools."""
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.post(
+        f"/checklists/templates/{checklist_id}/items/",
+        token,
+        params={
+            "text": text,
+            "source": source,
+            "required": required,
+            "is_critical": is_critical,
+        },
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def checklist_add_checkbox(
+    checklist_id: str,
+    text: str,
+    required: bool = True,
+    is_critical: bool = False,
+) -> dict[str, Any]:
+    """Add a manual task to a checklist. The user physically checks this off during an operation.
+
+    Use for physical actions: verify battery charge, inspect propellers, confirm weather brief.
+    Returns task_id — use it directly in rule_link_task without re-reading the checklist.
+
+    Args:
+        checklist_id: UUID of the checklist to add to.
+        text: Task description (e.g. 'Verify battery charge above 80%').
+        required: Must be completed to submit the checklist (default: true).
+        is_critical: Blocks the operation if not completed (default: false).
+    """
+    return await _add_checklist_task(
+        checklist_id, text, "manual", required, is_critical
+    )
+
+
+@mcp.tool()
+async def checklist_add_system_check(
+    checklist_id: str,
+    text: str,
+    required: bool = True,
+    is_critical: bool = False,
+) -> dict[str, Any]:
+    """Add a system-resolved task to a checklist. Ayna auto-checks this from its data.
+
+    Only use when Ayna can genuinely resolve it: pilot cert expiry, drone registration,
+    Remote ID status. System checks that cannot be auto-resolved will always show as failing.
+    Returns task_id — use it directly in rule_link_task.
+
+    Args:
+        checklist_id: UUID of the checklist to add to.
+        text: Check description (e.g. 'Pilot Part 107 certificate is current').
+        required: Default true.
+        is_critical: Default false.
+    """
+    return await _add_checklist_task(
+        checklist_id, text, "checker", required, is_critical
+    )
+
+
+@mcp.tool()
+async def checklist_add_log_entry(
+    checklist_id: str,
+    text: str,
+    required: bool = True,
+    is_critical: bool = False,
+) -> dict[str, Any]:
+    """Add a record task to a checklist. Completing this requires attaching a document or log entry.
+
+    Use for documented actions: inspection reports, maintenance logs, flight briefs.
+    Returns task_id — use it directly in rule_link_task.
+
+    Args:
+        checklist_id: UUID of the checklist to add to.
+        text: Record description (e.g. 'Pre-flight hardware inspection report attached').
+        required: Default true.
+        is_critical: Default false.
+    """
+    return await _add_checklist_task(
+        checklist_id, text, "record", required, is_critical
+    )
+
+
+@mcp.tool()
+async def checklist_update_task(
+    checklist_id: str,
+    task_id: str,
+    text: str | None = None,
+    required: bool | None = None,
+    is_critical: bool | None = None,
+) -> dict[str, Any]:
+    """Update a task item's text or flags. Does not change the task type.
+
+    Args:
+        checklist_id: UUID of the checklist containing the task.
+        task_id: The task item ID to update.
+        text: New task text (omit to leave unchanged).
+        required: New required flag (omit to leave unchanged).
+        is_critical: New critical flag (omit to leave unchanged).
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    body: dict[str, Any] = {}
+    if text is not None:
+        body["text"] = text
+    if required is not None:
+        body["required"] = required
+    if is_critical is not None:
+        body["is_critical"] = is_critical
+    if not body:
+        return {"success": False, "error": "Provide at least one field to update."}
+    return await _api_client.patch(
+        f"/checklists/templates/{checklist_id}/items/{task_id}/",
+        token,
+        params=body,
+        extra_headers=_agent_headers(),
+    )
+
+
+@mcp.tool()
+async def checklist_remove_task(checklist_id: str, task_id: str) -> dict[str, Any]:
+    """Remove a task from a checklist.
+
+    Args:
+        checklist_id: UUID of the checklist containing the task.
+        task_id: The task item ID to remove.
+    """
+    token = _resolve_token()
+    if not token:
+        return {"success": False, "error": "No API token available."}
+    return await _api_client.request(
+        "DELETE",
+        f"/checklists/templates/{checklist_id}/items/{task_id}/",
+        token,
+        extra_headers=_agent_headers(),
     )
 
 
