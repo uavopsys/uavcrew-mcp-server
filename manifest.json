@@ -41,7 +41,7 @@
             "actions": {
                 "start": {
                     "method": "POST",
-                    "path": "/flights/start"
+                    "path": "/flights/start/"
                 },
                 "end": {
                     "method": "POST",
@@ -159,7 +159,7 @@
                 },
                 "upload": {
                     "method": "POST",
-                    "path": "/records/upload-url"
+                    "path": "/records/upload-url/"
                 },
                 "move": {
                     "method": "POST",
