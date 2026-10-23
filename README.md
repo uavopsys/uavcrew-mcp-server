@@ -367,3 +367,25 @@ uavcrew restart
 ## License
 
 MIT License — See [LICENSE](LICENSE) file.
+
+## Aircraft page comments (AYNA)
+
+Use the existing `action` tool with the `aircraft.add_comment` action:
+
+```json
+{
+  "entity": "aircraft",
+  "action": "add_comment",
+  "id": "<aircraft UUID or MAVLink ID>",
+  "params": {"content": "Inspect propellers before the next flight."}
+}
+```
+
+Requires `write:aircraft` in the delegation scope. The gateway posts to
+`/api/v1/aircraft/{id}/comments`; AYNA creates a comment linked to the aircraft
+and displays it in the page activity list, with the agent identified by `X-Agent`.
+Existing comments and aircraft notes are preserved.
+
+Deploy the AYNA endpoint before enabling the new gateway manifest. Restart the
+gateway after updating the manifest, which is loaded at startup. The existing
+approval flow executes this action through the generic action tool.

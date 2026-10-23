@@ -34,6 +34,11 @@
         "update": {
           "method": "PATCH",
           "path": "/drones/{id}"
+        },
+        "add_comment": {
+          "method": "POST",
+          "path": "/aircraft/{id}/comments",
+          "description": "Append a comment to aircraft page activity. Required params: content (non-empty string). Accepts UUID or MAVLink ID."
         }
       }
     },
